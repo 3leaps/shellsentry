@@ -1,0 +1,87 @@
+# goneat assess configuration for shellsentry
+# See: goneat docs show user-guide/commands/assess
+version: 1
+lint:
+  # YAML linting for workflows and config files
+  yamllint:
+    enabled: true
+    strict: true
+    paths:
+      - ".github/workflows/**/*.yml"
+      - ".github/workflows/**/*.yaml"
+      - ".goneat/**/*.yaml"
+      - "patterns/**/*.yaml"
+    ignore: []
+  # Shell script linting (shfmt for format, shellcheck opt-in)
+  shell:
+    shfmt:
+      enabled: true
+      fix: false # Check only by default; use --lint-shell-fix to apply
+      args: ["-i", "4", "-ci"] # 4-space indent, case indent
+    shellcheck:
+      enabled: false # GPL, verify-only, opt-in
+      path: ""
+    paths:
+      - "**/*.sh"
+      - "scripts/**/*.sh"
+    ignore:
+      - "**/node_modules/**"
+      - "**/.git/**"
+      - "**/vendor/**"
+      - "**/*.orig"
+      - "**/testdata/**"
+      - ".plans/**"
+      - "bin/**"
+      - "dist/**"
+  # GitHub Actions workflow linting
+  github_actions:
+    actionlint:
+      enabled: true
+      paths:
+        - ".github/workflows/**/*.yml"
+        - ".github/workflows/**/*.yaml"
+      ignore: []
+  # Makefile linting
+  make:
+    checkmake:
+      enabled: true
+      config:
+        max_body_length: 70 # Bootstrap targets can be complex
+        min_phony_targets:
+          - all
+          - build
+          - clean
+          - test
+          - help
+    paths:
+      - "**/Makefile"
+    ignore: []
+# Format configuration
+format:
+  # Markdown formatting with prettier
+  markdown:
+    enabled: true
+    paths:
+      - "**/*.md"
+    ignore:
+      - ".plans/**"
+      - "**/node_modules/**"
+      - "**/vendor/**"
+  # JSON formatting with prettier
+  json:
+    enabled: true
+    paths:
+      - "**/*.json"
+    ignore:
+      - "**/node_modules/**"
+      - "**/vendor/**"
+      - "go.sum"
+  # YAML formatting with yamlfmt
+  yaml:
+    enabled: true
+    paths:
+      - "**/*.yaml"
+      - "**/*.yml"
+    ignore:
+      - "**/node_modules/**"
+      - "**/vendor/**"

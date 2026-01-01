@@ -1,0 +1,17 @@
+{
+  "description": "Expected findings for bun install script (https://bun.sh/install)",
+  "retrieved": "2025-12-25",
+  "expected_risk_level": "warning",
+  "expected_summary": {
+    "high": 0,
+    "medium": 3,
+    "low": 1,
+    "info": 7
+  },
+  "notes": [
+    "3 medium findings: PATH modifications for shell integration",
+    "1 low finding: curl network download",
+    "7 info findings: file write operations",
+    "No high-severity findings - this is a legitimate install script"
+  ]
+}

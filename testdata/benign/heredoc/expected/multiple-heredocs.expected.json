@@ -1,0 +1,16 @@
+{
+  "description": "Expected findings for multiple heredocs fixture",
+  "expected_risk_level": "clean",
+  "expected_summary": {
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "info": 0
+  },
+  "notes": [
+    "Tests multiple heredocs in one script with different delimiters",
+    "Includes heredocs at top level and inside functions",
+    "Verifies all heredoc regions are identified and protected",
+    "No risky patterns - this is a syntax test fixture"
+  ]
+}

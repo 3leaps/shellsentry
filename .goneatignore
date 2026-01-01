@@ -1,0 +1,23 @@
+# goneat ignore patterns for shellsentry
+# These paths are excluded from assessment
+
+# Build artifacts
+bin/
+dist/
+coverage.out
+
+# Dependencies
+vendor/
+node_modules/
+
+# Planning docs (local drafts, tactical notes)
+.plans/
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Test artifacts
+test-corpus/
+testdata/generated/

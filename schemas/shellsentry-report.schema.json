@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/3leaps/shellsentry/schemas/shellsentry-report.schema.json",
+  "title": "shellsentry Report",
+  "description": "JSON output schema for shellsentry static analysis reports",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "schema_stability",
+    "tool_version",
+    "analyzed_at",
+    "risk_level",
+    "summary",
+    "findings"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version (semver-ish, e.g., '0.1')",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "schema_stability": {
+      "type": "string",
+      "description": "Stability level of the schema",
+      "enum": [
+        "experimental",
+        "stable"
+      ]
+    },
+    "tool_version": {
+      "type": "string",
+      "description": "shellsentry binary version that produced this report"
+    },
+    "file": {
+      "type": "string",
+      "description": "Name of the analyzed file (omitted for stdin)"
+    },
+    "source": {
+      "type": "object",
+      "description": "Optional provenance metadata for the analyzed script",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL the script was fetched from"
+        },
+        "repo": {
+          "type": "string",
+          "description": "Repository identifier (e.g., 'owner/repo')"
+        }
+      }
+    },
+    "analyzed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of analysis"
+    },
+    "shell": {
+      "type": "string",
+      "description": "Detected shell type (bash, sh, zsh, unknown)",
+      "enum": [
+        "bash",
+        "sh",
+        "zsh",
+        "unknown"
+      ]
+    },
+    "lines": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total lines in the script"
+    },
+    "risk_level": {
+      "type": "string",
+      "description": "Overall risk assessment",
+      "enum": [
+        "clean",
+        "info",
+        "warning",
+        "danger",
+        "error"
+      ]
+    },
+    "risk_score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Numeric risk score (0-100)"
+    },
+    "summary": {
+      "type": "object",
+      "description": "Count of findings by severity",
+      "required": [
+        "high",
+        "medium",
+        "low",
+        "info"
+      ],
+      "properties": {
+        "high": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "medium": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "low": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "info": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "List of detected patterns/issues",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Script metrics and statistics",
+      "properties": {
+        "external_commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of external commands invoked"
+        },
+        "network_operations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of network-related operations"
+        },
+        "filesystem_writes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of filesystem write operations"
+        },
+        "privilege_escalations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of sudo/privilege escalation operations"
+        }
+      }
+    },
+    "shellcheck": {
+      "type": "object",
+      "description": "shellcheck integration status",
+      "properties": {
+        "available": {
+          "type": "boolean",
+          "description": "Whether shellcheck was available"
+        },
+        "findings_merged": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of shellcheck findings incorporated"
+        }
+      }
+    },
+    "parse_errors": {
+      "type": "array",
+      "description": "Parse errors encountered (if any)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "line": {
+            "type": "integer"
+          },
+          "column": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "severity",
+        "category",
+        "message"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Finding identifier (e.g., 'SS001')",
+          "pattern": "^SS[0-9]{3}$"
+        },
+        "severity": {
+          "type": "string",
+          "description": "Severity level",
+          "enum": [
+            "high",
+            "medium",
+            "low",
+            "info"
+          ]
+        },
+        "category": {
+          "type": "string",
+          "description": "Category of the finding",
+          "enum": [
+            "execution",
+            "download",
+            "privilege",
+            "obfuscation",
+            "persistence",
+            "network",
+            "filesystem",
+            "credential",
+            "destructive",
+            "informational"
+          ]
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Line number where pattern was found"
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Column number where pattern starts"
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End line for multi-line patterns"
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End column for multi-line patterns"
+        },
+        "code": {
+          "type": "string",
+          "description": "The matched code snippet"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable description of the finding"
+        },
+        "detail": {
+          "type": "string",
+          "description": "Extended explanation of the risk"
+        },
+        "recommendation": {
+          "type": "string",
+          "description": "Suggested remediation or review action"
+        }
+      }
+    }
+  }
+}

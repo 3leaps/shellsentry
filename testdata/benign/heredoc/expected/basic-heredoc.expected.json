@@ -1,0 +1,15 @@
+{
+  "description": "Expected findings for basic heredoc fixture",
+  "expected_risk_level": "clean",
+  "expected_summary": {
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "info": 0
+  },
+  "notes": [
+    "Tests basic <<EOF heredoc syntax",
+    "Verifies # prefixed lines inside heredocs are preserved (not stripped as comments)",
+    "No risky patterns - this is a syntax test fixture"
+  ]
+}

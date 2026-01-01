@@ -1,0 +1,17 @@
+{
+  "description": "Expected findings for heredoc in subshell fixture",
+  "expected_risk_level": "clean",
+  "expected_summary": {
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "info": 0
+  },
+  "notes": [
+    "Tests heredocs in command substitution $(...)",
+    "Tests heredocs in subshell (...)",
+    "Tests heredocs in while-read loops",
+    "Verifies nested heredoc detection works correctly",
+    "No risky patterns - this is a syntax test fixture"
+  ]
+}
