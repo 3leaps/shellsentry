@@ -341,3 +341,164 @@ func TestSARIFFormatter_SeverityMapping(t *testing.T) {
 		})
 	}
 }
+
+// Tests for text formatter helper functions
+
+func TestRiskIcon(t *testing.T) {
+	tests := []struct {
+		level    types.RiskLevel
+		expected string
+	}{
+		{types.RiskClean, "CLEAN"},
+		{types.RiskInfo, "INFO"},
+		{types.RiskWarning, "WARNING"},
+		{types.RiskDanger, "DANGER"},
+		{types.RiskError, "ERROR"},
+		{types.RiskLevel("unknown"), "UNKNOWN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.level), func(t *testing.T) {
+			got := riskIcon(tt.level)
+			if got != tt.expected {
+				t.Errorf("riskIcon(%q) = %q, want %q", tt.level, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatRiskLevel(t *testing.T) {
+	tests := []struct {
+		level    types.RiskLevel
+		contains string
+	}{
+		{types.RiskClean, "Clean"},
+		{types.RiskInfo, "Info"},
+		{types.RiskWarning, "Warning"},
+		{types.RiskDanger, "Danger"},
+		{types.RiskError, "Error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.level), func(t *testing.T) {
+			got := formatRiskLevel(tt.level)
+			if !strings.Contains(got, tt.contains) {
+				t.Errorf("formatRiskLevel(%q) = %q, want to contain %q", tt.level, got, tt.contains)
+			}
+		})
+	}
+
+	// Test unknown level returns the level itself
+	t.Run("unknown", func(t *testing.T) {
+		unknown := types.RiskLevel("custom")
+		got := formatRiskLevel(unknown)
+		if got != "custom" {
+			t.Errorf("formatRiskLevel(%q) = %q, want %q", unknown, got, "custom")
+		}
+	})
+}
+
+func TestSeverityIcon(t *testing.T) {
+	tests := []struct {
+		severity types.Severity
+		expected string
+	}{
+		{types.SeverityHigh, "HIGH"},
+		{types.SeverityMedium, "MEDIUM"},
+		{types.SeverityLow, "LOW"},
+		{types.SeverityInfo, "INFO"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.severity), func(t *testing.T) {
+			got := severityIcon(tt.severity)
+			if got != tt.expected {
+				t.Errorf("severityIcon(%q) = %q, want %q", tt.severity, got, tt.expected)
+			}
+		})
+	}
+
+	// Test unknown severity returns the severity itself
+	t.Run("unknown", func(t *testing.T) {
+		unknown := types.Severity("custom")
+		got := severityIcon(unknown)
+		if got != "custom" {
+			t.Errorf("severityIcon(%q) = %q, want %q", unknown, got, "custom")
+		}
+	})
+}
+
+func TestWrapText(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		width    int
+		expected []string
+	}{
+		{
+			name:     "short text no wrap",
+			text:     "hello world",
+			width:    20,
+			expected: []string{"hello world"},
+		},
+		{
+			name:     "exact width",
+			text:     "hello world",
+			width:    11,
+			expected: []string{"hello world"},
+		},
+		{
+			name:     "single wrap",
+			text:     "hello world foo",
+			width:    11,
+			expected: []string{"hello world", "foo"},
+		},
+		{
+			name:     "multiple wraps",
+			text:     "one two three four five six",
+			width:    10,
+			expected: []string{"one two", "three four", "five six"},
+		},
+		{
+			name:     "empty string",
+			text:     "",
+			width:    10,
+			expected: []string{""},
+		},
+		{
+			name:     "single long word",
+			text:     "supercalifragilisticexpialidocious",
+			width:    10,
+			expected: []string{"supercalifragilisticexpialidocious"},
+		},
+		{
+			name:     "short text preserves spaces",
+			text:     "hello    world",
+			width:    20,
+			expected: []string{"hello    world"},
+		},
+		{
+			name:     "wrapping collapses spaces",
+			text:     "hello    world    foo",
+			width:    12,
+			expected: []string{"hello world", "foo"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := wrapText(tt.text, tt.width)
+			if len(got) != len(tt.expected) {
+				t.Errorf("wrapText(%q, %d) returned %d lines, want %d\ngot: %v\nwant: %v",
+					tt.text, tt.width, len(got), len(tt.expected), got, tt.expected)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("wrapText(%q, %d)[%d] = %q, want %q",
+						tt.text, tt.width, i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}

@@ -196,7 +196,7 @@ func fetchLatestRelease() (*GitHubRelease, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
@@ -225,7 +225,7 @@ func downloadBytes(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
@@ -301,7 +301,7 @@ func extractFromTarGz(data []byte, filename string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer gzr.Close()
+	defer func() { _ = gzr.Close() }()
 
 	tr := tar.NewReader(gzr)
 	for {
@@ -333,7 +333,7 @@ func extractFromZip(data []byte, filename string) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			return io.ReadAll(rc)
 		}
 	}
@@ -354,12 +354,12 @@ func atomicReplace(targetPath string, data []byte) error {
 	success := false
 	defer func() {
 		if !success {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 		}
 	}()
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -391,10 +391,10 @@ func compareVersions(v1, v2 string) (int, error) {
 	for i := 0; i < 3; i++ {
 		var n1, n2 int
 		if i < len(parts1) {
-			fmt.Sscanf(parts1[i], "%d", &n1)
+			_, _ = fmt.Sscanf(parts1[i], "%d", &n1)
 		}
 		if i < len(parts2) {
-			fmt.Sscanf(parts2[i], "%d", &n2)
+			_, _ = fmt.Sscanf(parts2[i], "%d", &n2)
 		}
 		if n1 < n2 {
 			return -1, nil
@@ -411,8 +411,8 @@ func isMajorJump(old, new string) bool {
 	new = strings.TrimPrefix(new, "v")
 
 	var oldMajor, newMajor int
-	fmt.Sscanf(old, "%d", &oldMajor)
-	fmt.Sscanf(new, "%d", &newMajor)
+	_, _ = fmt.Sscanf(old, "%d", &oldMajor)
+	_, _ = fmt.Sscanf(new, "%d", &newMajor)
 
 	return newMajor > oldMajor
 }

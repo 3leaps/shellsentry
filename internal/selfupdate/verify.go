@@ -45,8 +45,8 @@ type TrustAnchorInfo struct {
 
 // VerifyCommands contains platform-specific verification commands.
 type VerifyCommands struct {
-	Checksum  string `json:"checksum"`
-	Minisign  string `json:"minisign"`
+	Checksum string `json:"checksum"`
+	Minisign string `json:"minisign"`
 }
 
 // PrintSelfVerify outputs verification instructions.
@@ -163,13 +163,14 @@ func fetchExpectedHash(version, asset string) (hash, algo string, err error) {
 		if err != nil {
 			continue
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
 			continue
 		}
 
 		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
 		if err != nil {
 			continue
 		}
@@ -192,67 +193,67 @@ func fetchExpectedHash(version, asset string) (hash, algo string, err error) {
 }
 
 func printVerifyText(w io.Writer, info *VerifyInfo) {
-	fmt.Fprintf(w, "\nshellsentry %s (%s)\n", info.Version, info.Platform)
-	fmt.Fprintf(w, "Built: %s\n", info.BuildTime)
-	fmt.Fprintf(w, "Commit: %s\n", info.GitCommit)
+	_, _ = fmt.Fprintf(w, "\nshellsentry %s (%s)\n", info.Version, info.Platform)
+	_, _ = fmt.Fprintf(w, "Built: %s\n", info.BuildTime)
+	_, _ = fmt.Fprintf(w, "Commit: %s\n", info.GitCommit)
 
 	if info.IsDev {
-		fmt.Fprintln(w, "\nThis is a development build. No published checksums available.")
-		fmt.Fprintln(w, "To verify a release build, install from: https://github.com/3leaps/shellsentry/releases")
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Embedded trust anchors:")
-		fmt.Fprintf(w, "  Minisign pubkey: %s\n", info.TrustAnchor.MinisignPubkey)
-		fmt.Fprintf(w, "  Key ID: %s\n", info.TrustAnchor.KeyID)
+		_, _ = fmt.Fprintln(w, "\nThis is a development build. No published checksums available.")
+		_, _ = fmt.Fprintln(w, "To verify a release build, install from: https://github.com/3leaps/shellsentry/releases")
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "Embedded trust anchors:")
+		_, _ = fmt.Fprintf(w, "  Minisign pubkey: %s\n", info.TrustAnchor.MinisignPubkey)
+		_, _ = fmt.Fprintf(w, "  Key ID: %s\n", info.TrustAnchor.KeyID)
 		return
 	}
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Release URLs:")
-	fmt.Fprintf(w, "  SHA2-512SUMS:         %s\n", info.URLs.SHA512SUMS)
-	fmt.Fprintf(w, "  SHA2-512SUMS.minisig: %s\n", info.URLs.SHA512SUMSMinisig)
-	fmt.Fprintf(w, "  SHA256SUMS:           %s\n", info.URLs.SHA256SUMS)
-	fmt.Fprintf(w, "  SHA256SUMS.minisig:   %s\n", info.URLs.SHA256SUMSMinisig)
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Release URLs:")
+	_, _ = fmt.Fprintf(w, "  SHA2-512SUMS:         %s\n", info.URLs.SHA512SUMS)
+	_, _ = fmt.Fprintf(w, "  SHA2-512SUMS.minisig: %s\n", info.URLs.SHA512SUMSMinisig)
+	_, _ = fmt.Fprintf(w, "  SHA256SUMS:           %s\n", info.URLs.SHA256SUMS)
+	_, _ = fmt.Fprintf(w, "  SHA256SUMS.minisig:   %s\n", info.URLs.SHA256SUMSMinisig)
 
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "Expected asset: %s\n", info.Asset)
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintf(w, "Expected asset: %s\n", info.Asset)
 
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	if info.HashError != "" {
-		fmt.Fprintln(w, "Expected hash: (network unavailable - fetch manually from URLs above)")
+		_, _ = fmt.Fprintln(w, "Expected hash: (network unavailable - fetch manually from URLs above)")
 	} else {
 		algoLabel := "SHA256"
 		if info.HashAlgo == "sha512" {
 			algoLabel = "SHA512"
 		}
-		fmt.Fprintf(w, "Expected %s (fetched from release):\n", algoLabel)
-		fmt.Fprintf(w, "  %s\n", info.ExpectedHash)
+		_, _ = fmt.Fprintf(w, "Expected %s (fetched from release):\n", algoLabel)
+		_, _ = fmt.Fprintf(w, "  %s\n", info.ExpectedHash)
 	}
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Verify checksum externally:")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Verify checksum externally:")
 	switch runtime.GOOS {
 	case "darwin":
-		fmt.Fprintln(w, "  # macOS")
+		_, _ = fmt.Fprintln(w, "  # macOS")
 	case "windows":
-		fmt.Fprintln(w, "  # Windows (PowerShell)")
+		_, _ = fmt.Fprintln(w, "  # Windows (PowerShell)")
 	default:
-		fmt.Fprintln(w, "  # Linux")
+		_, _ = fmt.Fprintln(w, "  # Linux")
 	}
-	fmt.Fprintf(w, "  %s\n", info.Commands.Checksum)
+	_, _ = fmt.Fprintf(w, "  %s\n", info.Commands.Checksum)
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Verify signature with minisign:")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Verify signature with minisign:")
 	for _, line := range strings.Split(info.Commands.Minisign, "\n") {
-		fmt.Fprintf(w, "  %s\n", line)
+		_, _ = fmt.Fprintf(w, "  %s\n", line)
 	}
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Embedded trust anchors:")
-	fmt.Fprintf(w, "  Minisign pubkey: %s\n", info.TrustAnchor.MinisignPubkey)
-	fmt.Fprintf(w, "  Key ID: %s\n", info.TrustAnchor.KeyID)
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Embedded trust anchors:")
+	_, _ = fmt.Fprintf(w, "  Minisign pubkey: %s\n", info.TrustAnchor.MinisignPubkey)
+	_, _ = fmt.Fprintf(w, "  Key ID: %s\n", info.TrustAnchor.KeyID)
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "WARNING: A compromised binary could lie. Run these commands yourself.")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "WARNING: A compromised binary could lie. Run these commands yourself.")
 }
 
 func printVerifyJSON(w io.Writer, info *VerifyInfo) {

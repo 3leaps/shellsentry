@@ -4,6 +4,10 @@
 package selfupdate
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"runtime"
 	"strings"
 	"testing"
@@ -426,5 +430,261 @@ func TestFindAsset(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Tier 2: Archive extraction tests
+
+// createTestTarGz creates an in-memory tar.gz archive with the given files
+func createTestTarGz(files map[string][]byte) []byte {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+
+	for name, content := range files {
+		hdr := &tar.Header{
+			Name: name,
+			Mode: 0755,
+			Size: int64(len(content)),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			panic(err)
+		}
+		if _, err := tw.Write(content); err != nil {
+			panic(err)
+		}
+	}
+
+	_ = tw.Close()
+	_ = gw.Close()
+	return buf.Bytes()
+}
+
+// createTestZip creates an in-memory zip archive with the given files
+func createTestZip(files map[string][]byte) []byte {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			panic(err)
+		}
+		if _, err := w.Write(content); err != nil {
+			panic(err)
+		}
+	}
+
+	_ = zw.Close()
+	return buf.Bytes()
+}
+
+func TestExtractFromTarGz(t *testing.T) {
+	testContent := []byte("#!/bin/bash\necho hello")
+
+	tests := []struct {
+		name        string
+		files       map[string][]byte
+		target      string
+		wantContent []byte
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "finds file at root",
+			files:       map[string][]byte{"shellsentry": testContent},
+			target:      "shellsentry",
+			wantContent: testContent,
+		},
+		{
+			name:        "finds file in subdirectory by basename",
+			files:       map[string][]byte{"shellsentry-v1.0.0/shellsentry": testContent},
+			target:      "shellsentry",
+			wantContent: testContent,
+		},
+		{
+			name:        "file not found",
+			files:       map[string][]byte{"other": testContent},
+			target:      "shellsentry",
+			wantErr:     true,
+			errContains: "not found",
+		},
+		{
+			name:        "multiple files finds correct one",
+			files:       map[string][]byte{"README.md": []byte("readme"), "shellsentry": testContent, "LICENSE": []byte("license")},
+			target:      "shellsentry",
+			wantContent: testContent,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			archive := createTestTarGz(tt.files)
+			got, err := extractFromTarGz(archive, tt.target)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("extractFromTarGz() expected error, got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("extractFromTarGz() error = %q, want containing %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("extractFromTarGz() unexpected error: %v", err)
+				return
+			}
+
+			if !bytes.Equal(got, tt.wantContent) {
+				t.Errorf("extractFromTarGz() content mismatch\ngot:  %q\nwant: %q", got, tt.wantContent)
+			}
+		})
+	}
+}
+
+func TestExtractFromTarGz_InvalidData(t *testing.T) {
+	// Test with invalid gzip data
+	_, err := extractFromTarGz([]byte("not a gzip file"), "shellsentry")
+	if err == nil {
+		t.Error("extractFromTarGz() expected error for invalid data, got nil")
+	}
+}
+
+func TestExtractFromZip(t *testing.T) {
+	testContent := []byte("#!/bin/bash\necho hello")
+
+	tests := []struct {
+		name        string
+		files       map[string][]byte
+		target      string
+		wantContent []byte
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "finds file at root",
+			files:       map[string][]byte{"shellsentry.exe": testContent},
+			target:      "shellsentry.exe",
+			wantContent: testContent,
+		},
+		{
+			name:        "finds file in subdirectory by basename",
+			files:       map[string][]byte{"shellsentry-v1.0.0/shellsentry.exe": testContent},
+			target:      "shellsentry.exe",
+			wantContent: testContent,
+		},
+		{
+			name:        "file not found",
+			files:       map[string][]byte{"other.exe": testContent},
+			target:      "shellsentry.exe",
+			wantErr:     true,
+			errContains: "not found",
+		},
+		{
+			name:        "multiple files finds correct one",
+			files:       map[string][]byte{"README.md": []byte("readme"), "shellsentry.exe": testContent, "LICENSE": []byte("license")},
+			target:      "shellsentry.exe",
+			wantContent: testContent,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			archive := createTestZip(tt.files)
+			got, err := extractFromZip(archive, tt.target)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("extractFromZip() expected error, got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("extractFromZip() error = %q, want containing %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("extractFromZip() unexpected error: %v", err)
+				return
+			}
+
+			if !bytes.Equal(got, tt.wantContent) {
+				t.Errorf("extractFromZip() content mismatch\ngot:  %q\nwant: %q", got, tt.wantContent)
+			}
+		})
+	}
+}
+
+func TestExtractFromZip_InvalidData(t *testing.T) {
+	// Test with invalid zip data
+	_, err := extractFromZip([]byte("not a zip file"), "shellsentry.exe")
+	if err == nil {
+		t.Error("extractFromZip() expected error for invalid data, got nil")
+	}
+}
+
+func TestMinisignCommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		version  string
+		pubkey   string
+		hashAlgo string
+		contains []string
+	}{
+		{
+			name:     "SHA256 algorithm",
+			version:  "1.0.0",
+			pubkey:   "RWTdRLXTdEKhwFNzVN2VGxfIb5djqGpY",
+			hashAlgo: "sha256",
+			contains: []string{"v1.0.0", "SHA256SUMS", "RWTdRLXTdEKhwFNzVN2VGxfIb5djqGpY", "minisign"},
+		},
+		{
+			name:     "SHA512 algorithm",
+			version:  "2.0.0",
+			pubkey:   "TESTPUBKEY123",
+			hashAlgo: "sha512",
+			contains: []string{"v2.0.0", "SHA2-512SUMS", "TESTPUBKEY123", "minisign"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := minisignCommand(tt.version, tt.pubkey, tt.hashAlgo)
+
+			for _, want := range tt.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("minisignCommand() = %q, should contain %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractBinary(t *testing.T) {
+	testContent := []byte("binary content")
+
+	// Create appropriate archive based on platform
+	var archive []byte
+	var targetName string
+
+	if runtime.GOOS == "windows" {
+		archive = createTestZip(map[string][]byte{"shellsentry.exe": testContent})
+		targetName = "shellsentry"
+	} else {
+		archive = createTestTarGz(map[string][]byte{"shellsentry": testContent})
+		targetName = "shellsentry"
+	}
+
+	got, err := extractBinary(archive, targetName)
+	if err != nil {
+		t.Fatalf("extractBinary() unexpected error: %v", err)
+	}
+
+	if !bytes.Equal(got, testContent) {
+		t.Errorf("extractBinary() content mismatch\ngot:  %q\nwant: %q", got, testContent)
 	}
 }

@@ -241,12 +241,12 @@ func printExtendedVersionTo(w io.Writer) error {
 
 func runSelfUpdate(cmd *cobra.Command) error {
 	if !selfUpdateYes {
-		fmt.Fprintln(cmd.ErrOrStderr(), "Self-update requires --yes to proceed.")
-		fmt.Fprintln(cmd.ErrOrStderr(), "Run: shellsentry --self-update --yes")
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Self-update requires --yes to proceed.")
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Run: shellsentry --self-update --yes")
 		return &ExitError{Code: 1}
 	}
 
-	fmt.Fprintln(cmd.ErrOrStderr(), "Checking for updates...")
+	_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Checking for updates...")
 
 	result, err := selfupdate.Update(selfupdate.UpdateOptions{
 		CurrentVersion: Version,
@@ -254,14 +254,14 @@ func runSelfUpdate(cmd *cobra.Command) error {
 		Force:          selfUpdateForce,
 	})
 	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Update failed: %v\n", err)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Update failed: %v\n", err)
 		return &ExitError{Code: 1}
 	}
 
 	if result.Updated {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Successfully updated: %s -> %s\n", result.OldVersion, result.NewVersion)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Successfully updated: %s -> %s\n", result.OldVersion, result.NewVersion)
 	} else {
-		fmt.Fprintln(cmd.ErrOrStderr(), result.Message)
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), result.Message)
 	}
 
 	return &ExitError{Code: 0}
