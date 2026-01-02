@@ -123,9 +123,32 @@ make build
 make install  # installs to ~/.local/bin
 ```
 
-### Verification (planned)
+### Verification
 
-`shellsentry --self-verify` is planned to help verify installed binaries against release trust anchors.
+Verify your installed binary against release trust anchors:
+
+```bash
+shellsentry --self-verify        # Show verification instructions
+shellsentry --self-verify --json # Machine-readable output
+```
+
+### Self-Update
+
+Update to the latest release with cryptographic verification:
+
+```bash
+shellsentry --self-update --yes  # Update with confirmation
+```
+
+The update process:
+1. Fetches latest release from GitHub
+2. Verifies minisign signature on checksums (mandatory)
+3. Verifies archive checksum
+4. Atomically replaces the binary
+
+Additional flags:
+- `--self-update-force` -- Allow major version jumps or update dev builds
+- `--self-update-dir DIR` -- Install to custom directory
 
 ## Build
 

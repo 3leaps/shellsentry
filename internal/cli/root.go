@@ -16,6 +16,7 @@ import (
 
 	"github.com/3leaps/shellsentry/internal/analyzer"
 	"github.com/3leaps/shellsentry/internal/output"
+	"github.com/3leaps/shellsentry/internal/selfupdate"
 	"github.com/3leaps/shellsentry/internal/types"
 )
 
@@ -45,6 +46,16 @@ var (
 	versionExtendedFlag bool
 )
 
+// CLI flags for self-update
+var (
+	selfVerifyFlag  bool
+	selfUpdateFlag  bool
+	selfUpdateForce bool
+	selfUpdateDir   string
+	selfUpdateYes   bool
+	jsonFlag        bool
+)
+
 // ExitError signals an intentional process exit with a specific code.
 // The caller (main) is responsible for turning this into os.Exit.
 type ExitError struct {
@@ -68,6 +79,13 @@ func resetFlags() {
 
 	versionFlag = false
 	versionExtendedFlag = false
+
+	selfVerifyFlag = false
+	selfUpdateFlag = false
+	selfUpdateForce = false
+	selfUpdateDir = ""
+	selfUpdateYes = false
+	jsonFlag = false
 }
 
 func stdinIsTerminal(r io.Reader) bool {
@@ -120,6 +138,23 @@ Examples:
 				}
 				return &ExitError{Code: 0}
 			}
+
+			// Handle --self-verify
+			// Text output to stderr (human-readable), JSON to stdout (machine-parseable)
+			if selfVerifyFlag {
+				if jsonFlag {
+					selfupdate.PrintSelfVerify(cmd.OutOrStdout(), Version, BuildTime, GitCommit, jsonFlag)
+				} else {
+					selfupdate.PrintSelfVerify(cmd.ErrOrStderr(), Version, BuildTime, GitCommit, jsonFlag)
+				}
+				return &ExitError{Code: 0}
+			}
+
+			// Handle --self-update
+			if selfUpdateFlag {
+				return runSelfUpdate(cmd)
+			}
+
 			return nil
 		},
 		RunE: runAnalysis,
@@ -145,6 +180,14 @@ Examples:
 	// Version flags (on root command for --version convention)
 	rootCmd.PersistentFlags().BoolVar(&versionFlag, "version", false, "Print version and exit")
 	rootCmd.PersistentFlags().BoolVar(&versionExtendedFlag, "version-extended", false, "Print extended version info and exit")
+
+	// Self-update flags
+	rootCmd.PersistentFlags().BoolVar(&selfVerifyFlag, "self-verify", false, "Print verification instructions for this binary")
+	rootCmd.PersistentFlags().BoolVar(&selfUpdateFlag, "self-update", false, "Update shellsentry to the latest release")
+	rootCmd.PersistentFlags().BoolVar(&selfUpdateForce, "self-update-force", false, "Allow major version jumps during self-update")
+	rootCmd.PersistentFlags().StringVar(&selfUpdateDir, "self-update-dir", "", "Custom install directory for self-update")
+	rootCmd.PersistentFlags().BoolVar(&selfUpdateYes, "yes", false, "Confirm self-update without prompting")
+	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format (for --self-verify)")
 
 	// Version command (subcommand style)
 	rootCmd.AddCommand(newVersionCmd())
@@ -194,6 +237,34 @@ func printExtendedVersionTo(w io.Writer) error {
 	}
 	_, err := fmt.Fprintf(w, "  OS/Arch:   %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	return err
+}
+
+func runSelfUpdate(cmd *cobra.Command) error {
+	if !selfUpdateYes {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Self-update requires --yes to proceed.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "Run: shellsentry --self-update --yes")
+		return &ExitError{Code: 1}
+	}
+
+	fmt.Fprintln(cmd.ErrOrStderr(), "Checking for updates...")
+
+	result, err := selfupdate.Update(selfupdate.UpdateOptions{
+		CurrentVersion: Version,
+		InstallDir:     selfUpdateDir,
+		Force:          selfUpdateForce,
+	})
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Update failed: %v\n", err)
+		return &ExitError{Code: 1}
+	}
+
+	if result.Updated {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Successfully updated: %s -> %s\n", result.OldVersion, result.NewVersion)
+	} else {
+		fmt.Fprintln(cmd.ErrOrStderr(), result.Message)
+	}
+
+	return &ExitError{Code: 0}
 }
 
 type runConfig struct {

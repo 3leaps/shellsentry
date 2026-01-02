@@ -6,11 +6,13 @@
 package main
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
 
 	"github.com/3leaps/shellsentry/internal/cli"
+	"github.com/3leaps/shellsentry/internal/selfupdate"
 )
 
 // Build-time variables (injected via ldflags)
@@ -20,11 +22,19 @@ var (
 	gitCommit = "unknown"
 )
 
+// Embedded trust anchor (minisign public key)
+//
+//go:embed configs/keys/shellsentry-minisign.pub
+var embeddedMinisignPubkey string
+
 func main() {
 	// Inject build info into CLI package
 	cli.Version = version
 	cli.BuildTime = buildTime
 	cli.GitCommit = gitCommit
+
+	// Inject embedded trust anchor into selfupdate package
+	selfupdate.SetEmbeddedMinisignPubkey(embeddedMinisignPubkey)
 
 	if err := cli.Execute(); err != nil {
 		var exitErr *cli.ExitError

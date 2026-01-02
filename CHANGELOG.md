@@ -7,6 +7,22 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-01-02
+
+### Added
+
+- `--self-verify` flag to display verification instructions and embedded trust anchors.
+- `--self-update` flag for cryptographically verified self-updates from GitHub releases.
+- Embedded minisign public key as build-time trust anchor.
+- SHA2-512SUMS support with automatic fallback to SHA256SUMS.
+- Dev build guard preventing accidental self-update without `--self-update-force`.
+
+### Security
+
+- Minisign signature verification is mandatory before any checksum is trusted.
+- Atomic binary replacement during self-update with rollback on failure.
+- Major version jump protection requires explicit `--self-update-force`.
+
 ## [0.1.0] - 2026-01-01
 
 ### Added

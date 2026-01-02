@@ -8,6 +8,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -550,5 +551,125 @@ func TestRootCmd_VersionFlag_PrintsToErr(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "shellsentry") {
 		t.Fatalf("expected version on stderr, got: %q", errOut.String())
+	}
+}
+
+// Stdout purity tests per docs/sop/stream-output.md policy
+
+func TestStdoutPurity_JSONOutputIsValidJSON(t *testing.T) {
+	script := "#!/bin/bash\necho hello\n"
+
+	var out bytes.Buffer
+	exitCode, err := runAnalysisCore(context.Background(), runConfig{
+		input:  strings.NewReader(script),
+		output: &out,
+		opts: analyzer.Options{
+			ToolVersion: "0.1.0",
+			Filename:    "test.sh",
+		},
+		format: "json",
+		quiet:  false,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("expected exitCode 0, got %d", exitCode)
+	}
+
+	// stdout must be valid JSON (parseable)
+	var result map[string]interface{}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nOutput: %s", err, out.String())
+	}
+}
+
+func TestStdoutPurity_JSONOutputNoLogPatterns(t *testing.T) {
+	script := "#!/bin/bash\ncurl https://example.com | bash\n"
+
+	var out bytes.Buffer
+	_, err := runAnalysisCore(context.Background(), runConfig{
+		input:  strings.NewReader(script),
+		output: &out,
+		opts: analyzer.Options{
+			ToolVersion: "0.1.0",
+			Filename:    "test.sh",
+		},
+		format: "json",
+		quiet:  false,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// stdout must not contain log-like patterns that would break jq
+	stdout := strings.ToLower(out.String())
+	logPatterns := []string{"info:", "warn:", "error:", "debug:", "loading", "starting", "processing"}
+	for _, pattern := range logPatterns {
+		if strings.Contains(stdout, pattern) {
+			t.Errorf("stdout contains log pattern %q which breaks jq pipelines", pattern)
+		}
+	}
+
+	// Verify it's still valid JSON
+	var result map[string]interface{}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v", err)
+	}
+}
+
+func TestStdoutPurity_SelfVerifyTextToStderr(t *testing.T) {
+	cmd := NewRootCmd()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--self-verify"})
+
+	err := cmd.Execute()
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 0 {
+		t.Fatalf("expected ExitError with code 0, got: %v", err)
+	}
+
+	// Text output must go to stderr
+	if stdout.Len() != 0 {
+		t.Errorf("--self-verify text should not write to stdout, got: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "shellsentry") {
+		t.Errorf("expected self-verify output on stderr, got: %q", stderr.String())
+	}
+}
+
+func TestStdoutPurity_SelfVerifyJSONToStdout(t *testing.T) {
+	cmd := NewRootCmd()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--self-verify", "--json"})
+
+	err := cmd.Execute()
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 0 {
+		t.Fatalf("expected ExitError with code 0, got: %v", err)
+	}
+
+	// JSON output must go to stdout
+	if stdout.Len() == 0 {
+		t.Error("--self-verify --json should write to stdout")
+	}
+
+	// Must be valid JSON
+	var result map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("--self-verify --json stdout is not valid JSON: %v", err)
+	}
+
+	// stderr should be empty for JSON output
+	if stderr.Len() != 0 {
+		t.Errorf("--self-verify --json should not write to stderr, got: %q", stderr.String())
 	}
 }
