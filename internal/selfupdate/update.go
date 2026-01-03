@@ -367,6 +367,7 @@ func atomicReplace(targetPath string, data []byte) error {
 	}
 
 	// Set executable permissions
+	// #nosec G302 -- executable binary requires execute permissions
 	if err := os.Chmod(tmpPath, 0755); err != nil {
 		return err
 	}
