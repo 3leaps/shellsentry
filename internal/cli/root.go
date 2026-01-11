@@ -307,7 +307,7 @@ func runAnalysis(cmd *cobra.Command, args []string) (err error) {
 	if len(args) == 1 {
 		// File argument
 		filename = args[0]
-		// #nosec G304 -- file path is provided by the user for analysis.
+		// #nosec G304 -- SDR-001: file path is provided by the user for analysis
 		f, err := os.Open(filename)
 		if err != nil {
 			return fmt.Errorf("failed to open file: %w", err)
@@ -362,7 +362,7 @@ func runAnalysis(cmd *cobra.Command, args []string) (err error) {
 	// Determine output destination
 	out := cmd.OutOrStdout()
 	if outputFile != "" {
-		// #nosec G304 -- output file path is user-controlled by design.
+		// #nosec G304 -- SDR-001: output file path is user-controlled by design
 		f, err := os.Create(outputFile)
 		if err != nil {
 			return fmt.Errorf("failed to create output file: %w", err)

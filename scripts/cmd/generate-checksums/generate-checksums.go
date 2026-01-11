@@ -169,7 +169,7 @@ func isArtifact(name string) bool {
 
 func writeChecksums(dir string, files []string, job checksumJob) (err error) {
 	outPath := filepath.Join(dir, job.outFile)
-	// #nosec G304 -- output path is derived from validated release dir and fixed filename.
+	// #nosec G304 -- SDR-001: build tool output path
 	outFile, err := os.Create(outPath)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", outPath, err)
@@ -193,7 +193,7 @@ func writeChecksums(dir string, files []string, job checksumJob) (err error) {
 }
 
 func computeFileHash(path string, newHash func() hash.Hash) (string, error) {
-	// #nosec G304 -- input path comes from ReadDir of the validated release dir.
+	// #nosec G304 -- SDR-001: build tool reading release assets
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
