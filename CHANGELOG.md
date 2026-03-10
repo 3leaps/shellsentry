@@ -7,6 +7,39 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-03-10
+
+### Changed
+
+- **Go toolchain**: 1.25.1 -> 1.26.1 (resolves 1 critical, 10 high, 11 medium stdlib CVEs).
+- **mvdan.cc/sh/v3**: 3.12.0 -> 3.13.0 (shell parser, direct dependency).
+- **golang.org/x/crypto**: 0.31.0 -> 0.48.0 (resolves 3 advisories including GHSA-hcg3-q754-cr77).
+- **golang.org/x/sys**: 0.33.0 -> 0.42.0.
+- **github.com/spf13/pflag**: 1.0.9 -> 1.0.10.
+- Pinned tool minimums: sfetch v0.4.5 and goneat v0.5.7.
+- Commit attribution updated to precise provenance chain format with model/tool URLs and `Role:` trailer.
+- Role catalog reorganized into categorized tables (Development & Engineering, Documentation & Governance).
+
+### Added
+
+- `.goneat/dependencies.yaml` for vulnerability scanning (`fail_on: high`), license compliance, and package cooling policy.
+
+### Security
+
+- All known stdlib and x/crypto CVEs resolved (0 findings on `goneat dependencies --vuln`).
+- Vulnerability gating enforced at `high` severity via goneat dependency protection.
+
+## [0.1.2] - 2026-01-10
+
+### Added
+
+- SDR documentation for gosec suppressions (G304, G302).
+- Test coverage improvements for output and selfupdate packages.
+
+### Security
+
+- Suppressed gosec G302 false positive for executable permissions on self-update binary.
+
 ## [0.1.1] - 2026-01-02
 
 ### Added

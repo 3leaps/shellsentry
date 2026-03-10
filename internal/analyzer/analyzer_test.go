@@ -711,7 +711,7 @@ func BenchmarkEngine_Analyze(b *testing.B) {
 	var sb strings.Builder
 	sb.WriteString("#!/bin/bash\nset -euo pipefail\n\n")
 	for i := 0; i < 100; i++ {
-		sb.WriteString(fmt.Sprintf("echo 'Processing step %d'\n", i))
+		fmt.Fprintf(&sb, "echo 'Processing step %d'\n", i)
 		if i%20 == 0 {
 			sb.WriteString("curl -fsSL https://example.com/step.sh -o /tmp/step.sh\n")
 		}

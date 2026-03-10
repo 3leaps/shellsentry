@@ -1,0 +1,88 @@
+# ============================================================================
+# shellsentry - Dependency Protection Configuration
+# ============================================================================
+# License compliance, package cooling (supply chain security), vulnerability
+# scanning, and SBOM generation.
+#
+# Commands:
+#   goneat dependencies --licenses      # License compliance check
+#   goneat dependencies --cooling       # Package cooling check (network)
+#   goneat dependencies --vuln          # Vulnerability scan (requires grype/syft)
+#   goneat dependencies --sbom          # Generate SBOM
+#
+# ============================================================================
+
+version: v1
+
+# ============================================================================
+# LICENSE COMPLIANCE POLICY
+# ============================================================================
+licenses:
+  forbidden:
+    - GPL-3.0
+    - AGPL-3.0
+    - MPL-2.0
+
+  allowed:
+    - MIT
+    - Apache-2.0
+    - BSD-3-Clause
+    - BSD-2-Clause
+    - ISC
+    - 0BSD
+    - Unlicense
+
+# ============================================================================
+# PACKAGE COOLING POLICY (Supply Chain Security)
+# ============================================================================
+# Enforces a waiting period before adopting newly published packages.
+# Protects against supply chain attacks.
+#
+# ⚠️  REQUIRES NETWORK ACCESS - queries package registries
+#
+cooling:
+  enabled: true
+  min_age_days: 7
+  min_downloads: 100
+  min_downloads_recent: 10
+  alert_only: false
+  grace_period_days: 3
+
+  exceptions:
+    - pattern: "github.com/3leaps/*"
+      reason: "Internal 3leaps packages are pre-vetted by maintainers"
+      approved_by: "@3leapsdave"
+      approved_date: "2026-03-10"
+
+# ============================================================================
+# VULNERABILITY SCANNING
+# ============================================================================
+# Scans dependencies for known vulnerabilities using grype.
+#
+# ⚠️  REQUIRES: grype and syft installed
+#     Install: goneat doctor tools --scope sbom --install --yes
+#
+vulnerabilities:
+  enabled: true
+  tool: grype
+
+  # Security tool warrants strict enforcement
+  fail_on: high
+
+  ignore_unfixed: false
+
+  # Allowlist specific CVEs (use sparingly, document reason)
+  # Each entry should reference an SDR with full analysis
+  # allow:
+  #   - id: CVE-XXXX-XXXXX
+  #     status: false_positive
+  #     reason: "Description of why this is safe"
+  #     sdr: docs/security/suppressions/SDR-NNN.md
+  #     verified_by: "@3leapsdave"
+  #     verified_date: "2026-03-10"
+
+# ============================================================================
+# POLICY ENGINE
+# ============================================================================
+policy_engine:
+  type: embedded

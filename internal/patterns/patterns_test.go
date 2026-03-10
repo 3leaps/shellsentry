@@ -1555,7 +1555,7 @@ func BenchmarkMatchAll(b *testing.B) {
 	var sb strings.Builder
 	sb.WriteString("#!/bin/bash\n")
 	for i := 0; i < 100; i++ {
-		sb.WriteString(fmt.Sprintf("echo 'line %d'\n", i))
+		fmt.Fprintf(&sb, "echo 'line %d'\n", i)
 		if i%10 == 0 {
 			sb.WriteString("curl https://example.com/file.tar.gz -o file.tar.gz\n")
 		}
