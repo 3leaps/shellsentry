@@ -16,6 +16,7 @@ G304 flags `os.ReadFile(path)`, `os.Open(path)`, and `os.Create(path)` where `pa
 ### Threat Model Consideration
 
 This rule protects against attacks where:
+
 1. Untrusted remote input becomes a file path
 2. The application has higher privileges than the input source
 3. Attackers could read/write sensitive files they shouldn't access
@@ -34,12 +35,12 @@ shellsentry is a CLI tool where:
 
 ### Affected Locations
 
-| File | Function | Purpose |
-|------|----------|---------|
-| internal/cli/root.go | runAnalysis | User-specified script file for analysis |
-| internal/cli/root.go | runAnalysis | User-specified output file path |
-| scripts/cmd/generate-checksums/ | writeChecksums | Build tool output path |
-| scripts/cmd/generate-checksums/ | computeFileHash | Build tool reading release assets |
+| File                            | Function        | Purpose                                 |
+| ------------------------------- | --------------- | --------------------------------------- |
+| internal/cli/root.go            | runAnalysis     | User-specified script file for analysis |
+| internal/cli/root.go            | runAnalysis     | User-specified output file path         |
+| scripts/cmd/generate-checksums/ | writeChecksums  | Build tool output path                  |
+| scripts/cmd/generate-checksums/ | computeFileHash | Build tool reading release assets       |
 
 ---
 
@@ -68,15 +69,15 @@ shellsentry sets 0755 permissions for:
 
 ### Affected Location
 
-| File | Function | Purpose |
-|------|----------|---------|
+| File                          | Function      | Purpose                                    |
+| ----------------------------- | ------------- | ------------------------------------------ |
 | internal/selfupdate/update.go | performUpdate | Downloaded binary needs execute permission |
 
 ---
 
 ## Suppression Audit Log
 
-| Date | SDR | Action | Author |
-|------|-----|--------|--------|
+| Date       | SDR     | Action  | Author          |
+| ---------- | ------- | ------- | --------------- |
 | 2026-01-10 | SDR-001 | Created | Claude Opus 4.5 |
 | 2026-01-10 | SDR-002 | Created | Claude Opus 4.5 |

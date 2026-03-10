@@ -24,6 +24,7 @@ This document walks maintainers through the build/sign/upload flow for each shel
 ## 2. Manual Signing (local machine)
 
 Set environment variables:
+
 ```bash
 export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
 export SHELLSENTRY_MINISIGN_KEY=/path/to/shellsentry.key
@@ -35,39 +36,47 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/custom/gpg/homedir   # optional, default
 ### Steps
 
 1. **Clean previous release artifacts**
+
    ```bash
    make release-clean
    ```
 
 2. **Download artifacts**
+
    ```bash
    make release-download
    ```
 
 3. **Generate & sign checksum manifests** (`SHA256SUMS`, `SHA2-512SUMS`) with minisign + PGP
+
    ```bash
    make release-checksums
    make release-sign
    ```
+
    Produces: `SHA256SUMS`, `SHA2-512SUMS` plus `.minisig`/`.asc`
 
 4. **Export public keys**
+
    ```bash
    make release-export-minisign-key   # -> shellsentry-minisign.pub
    make release-export-key            # -> shellsentry-release-signing-key.asc
    ```
 
 5. **Verify exported keys are public-only**
+
    ```bash
    make verify-release-key
    ```
 
 6. **Copy release notes** (requires `docs/releases/$SHELLSENTRY_RELEASE_TAG.md`)
+
    ```bash
    make release-notes
    ```
 
 7. **Verify checksums before upload**
+
    ```bash
    make release-verify-checksums
    ```
@@ -89,6 +98,7 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/custom/gpg/homedir   # optional, default
 ## 4. Post-Release Version Bump (optional)
 
 After release, bump VERSION for next development cycle:
+
 ```bash
 make version-patch   # 0.1.0 -> 0.1.1 (bugfix prep)
 # or: make version-minor  # 0.1.0 -> 0.2.0 (feature prep)
@@ -104,6 +114,7 @@ Check current version anytime with `make version-check`.
 ## Key Rotation Reminder
 
 If rotating signing keys, also update:
+
 - [ ] `scripts/install-shellsentry.sh` - embedded `SHELLSENTRY_MINISIGN_PUBKEY`
 - [ ] `README.md` - verification snippet public key
 - [ ] Any external documentation referencing shellsentry signing keys

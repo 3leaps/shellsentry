@@ -13,13 +13,14 @@ We aim to respond within 48 hours and will coordinate disclosure timing with you
 ## Supported Versions
 
 | Version | Supported |
-|---------|-----------|
+| ------- | --------- |
 | 0.1.x   | Yes       |
 | < 0.1   | No        |
 
 ## Security Model
 
 shellsentry is a CLI tool for analyzing shell scripts for security issues. See [THREAT_MODEL.md](THREAT_MODEL.md) for:
+
 - Trust boundaries
 - Attack surface analysis
 - Security controls
@@ -31,5 +32,6 @@ We use gosec for static security analysis. Suppressions are documented in [suppr
 ## Verification
 
 shellsentry releases include:
+
 - SHA-256 and SHA-512 checksums
 - Minisign signatures (Ed25519)

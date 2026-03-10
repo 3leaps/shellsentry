@@ -141,12 +141,14 @@ shellsentry --self-update --yes  # Update with confirmation
 ```
 
 The update process:
+
 1. Fetches latest release from GitHub
 2. Verifies minisign signature on checksums (mandatory)
 3. Verifies archive checksum
 4. Atomically replaces the binary
 
 Additional flags:
+
 - `--self-update-force` -- Allow major version jumps or update dev builds
 - `--self-update-dir DIR` -- Install to custom directory
 
