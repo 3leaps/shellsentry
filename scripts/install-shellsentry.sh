@@ -109,6 +109,61 @@ print_verifier_help() {
 # Platform detection
 # -----------------------------------------------------------------------------
 
+# Windows ARM64 detection with three-tier fallback.
+#
+# Git Bash on Windows ARM64 runs under x64 (WoW64) emulation, so uname -m and
+# PROCESSOR_ARCHITECTURE can both report amd64. This function queries three
+# sources to find the real host architecture:
+#   1. RUNNER_ARCH env var (GitHub Actions runners set this to the native arch)
+#   2. PowerShell RuntimeInformation.OSArchitecture (bypasses emulation)
+#   3. PROCESSOR_ARCHITEW6432 (Windows env var for native arch from WoW64)
+detect_windows_arch() {
+    local arch_hint
+
+    # Tier 1: GitHub Actions runners expose the native architecture via RUNNER_ARCH
+    arch_hint=$(printf '%s' "${RUNNER_ARCH:-}" | tr '[:upper:]' '[:lower:]')
+    case "$arch_hint" in
+        amd64 | x64 | x86_64)
+            echo "amd64"
+            return 0
+            ;;
+        arm64 | aarch64)
+            echo "arm64"
+            return 0
+            ;;
+    esac
+
+    # Tier 2: Ask native PowerShell for the host OS architecture
+    if command -v powershell.exe >/dev/null 2>&1; then
+        arch_hint=$(powershell.exe -NoProfile -NonInteractive -Command "[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture" 2>/dev/null | tr -d '\r' | tr '[:upper:]' '[:lower:]' | head -n1)
+        case "$arch_hint" in
+            amd64 | x64 | x86_64)
+                echo "amd64"
+                return 0
+                ;;
+            arm64 | aarch64)
+                echo "arm64"
+                return 0
+                ;;
+        esac
+    fi
+
+    # Tier 3: PROCESSOR_ARCHITEW6432 reports native arch even from WoW64
+    arch_hint=$(printf '%s' "${PROCESSOR_ARCHITEW6432:-${PROCESSOR_ARCHITECTURE:-}}" | tr '[:upper:]' '[:lower:]')
+    case "$arch_hint" in
+        amd64 | x64 | x86_64)
+            echo "amd64"
+            return 0
+            ;;
+        arm64 | aarch64)
+            echo "arm64"
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
 detect_platform() {
     local os arch
 
@@ -118,6 +173,15 @@ detect_platform() {
         MINGW* | MSYS* | CYGWIN*) os="windows" ;;
         *) err "unsupported OS: $(uname -s)" ;;
     esac
+
+    # Windows needs special handling: Git Bash under WoW64 emulation reports
+    # x86_64 even on ARM64 hardware. Use detect_windows_arch() for accuracy.
+    if [ "$os" = "windows" ]; then
+        if arch=$(detect_windows_arch); then
+            echo "${os}_${arch}"
+            return
+        fi
+    fi
 
     case "$(uname -m)" in
         x86_64 | amd64) arch="amd64" ;;
