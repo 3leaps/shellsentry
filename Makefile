@@ -224,11 +224,12 @@ build-all: ## Build for all platforms
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-linux-amd64      $(MAIN)
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-linux-arm64      $(MAIN)
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-windows-amd64.exe $(MAIN)
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-windows-arm64.exe $(MAIN)
 	@echo "[ok] Built all platforms to dist/release/"
 
 package-all: build-all ## Package release archives in dist/release
 	@set -euo pipefail; \
-	for pair in "darwin amd64" "darwin arm64" "linux amd64" "linux arm64" "windows amd64"; do \
+	for pair in "darwin amd64" "darwin arm64" "linux amd64" "linux arm64" "windows amd64" "windows arm64"; do \
 		set -- $$pair; \
 		os="$$1"; arch="$$2"; \
 		base="$(NAME)-$${os}-$${arch}"; \
@@ -323,7 +324,7 @@ release-verify-minisign-pubkey: build ## Verify minisign public key matches embe
 		fi; \
 	fi; \
 	echo "[verify] Minisign public key: $$FILE"; \
-	embedded=$$($(BUILD_ARTIFACT) --self-verify --json 2>/dev/null | grep -o '"minisignPubkey":"[^"]*"' | cut -d'"' -f4); \
+	embedded=$$($(BUILD_ARTIFACT) --self-verify --json 2>/dev/null | grep -o '"minisignPubkey"[[:space:]]*:[[:space:]]*"[^"]*"' | cut -d'"' -f4); \
 	file_key=$$(cat "$$FILE" 2>/dev/null | tr -d '\n'); \
 	if [ -z "$$embedded" ]; then echo "error: could not extract embedded pubkey" >&2; exit 1; fi; \
 	if [ -z "$$file_key" ]; then echo "error: could not read $$FILE" >&2; exit 1; fi; \
