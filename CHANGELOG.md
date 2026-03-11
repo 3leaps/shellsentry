@@ -23,6 +23,8 @@ Semantic Versioning.
 ### Fixed
 
 - Windows ARM64 platform detection in install script: Git Bash under WoW64 emulation reported `x86_64`, causing wrong binary download. Added three-tier `detect_windows_arch()` fallback (RUNNER_ARCH, PowerShell OSArchitecture, PROCESSOR_ARCHITEW6432).
+- `release-verify-minisign-pubkey` grep pattern now handles pretty-printed JSON output from `--self-verify --json`.
+- Added `windows/arm64` to `build-all` and `package-all` Makefile targets (was already in CI matrix).
 
 ## [0.1.3] - 2026-03-10
 
