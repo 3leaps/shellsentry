@@ -101,15 +101,15 @@ func Update(opts UpdateOptions) (*UpdateResult, error) {
 		return nil, fmt.Errorf("archive asset not found: %s", assetName())
 	}
 
-	// Try SHA2-512SUMS first (shellsentry preference), fall back to SHA256SUMS
-	checksumFile := "SHA2-512SUMS"
+	// Try SHA512SUMS first (shellsentry preference), fall back to SHA256SUMS
+	checksumFile := "SHA512SUMS"
 	checksumsAsset := findAsset(release.Assets, checksumFile)
 	if checksumsAsset == nil {
 		checksumFile = "SHA256SUMS"
 		checksumsAsset = findAsset(release.Assets, checksumFile)
 	}
 	if checksumsAsset == nil {
-		return nil, errors.New("no checksum file found in release (tried SHA2-512SUMS, SHA256SUMS)")
+		return nil, errors.New("no checksum file found in release (tried SHA512SUMS, SHA256SUMS)")
 	}
 
 	sigAsset := findAsset(release.Assets, checksumFile+".minisig")
@@ -262,7 +262,7 @@ func verifyMinisignSignature(message, signature []byte) error {
 }
 
 // computeHash returns the hex-encoded hash of data using the algorithm
-// indicated by the checksum filename (SHA2-512SUMS or SHA256SUMS).
+// indicated by the checksum filename (SHA512SUMS or SHA256SUMS).
 func computeHash(data []byte, checksumFile string) string {
 	var h hash.Hash
 	if strings.Contains(checksumFile, "512") {

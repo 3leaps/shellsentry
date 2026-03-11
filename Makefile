@@ -48,7 +48,10 @@ GONEAT = $(shell [ -x "$(BIN_DIR)/goneat" ] && echo "$(BIN_DIR)/goneat" || comma
 
 .PHONY: all help build test clean install fmt fmt-check lint check-all version tools prereqs bootstrap bootstrap-force build-all assess
 .PHONY: schema-validate schema-meta sarif-validate precommit prepush
-.PHONY: release-download release-checksums release-verify-checksums release-sign release-notes release-upload release-export-key release-export-minisign-key release-clean bootstrap-script verify-release-key
+.PHONY: release-download release-checksums release-verify-checksums release-sign
+.PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
+.PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
+.PHONY: release-clean bootstrap-script verify-release-key
 .PHONY: package-all
 
 all: build
@@ -253,7 +256,7 @@ bootstrap-script: ## Copy install script into release directory
 	cp scripts/install-shellsentry.sh $(DIST_RELEASE)/install-shellsentry.sh
 	@echo "[ok] Copied install-shellsentry.sh to $(DIST_RELEASE)"
 
-release-checksums: bootstrap-script ## Generate SHA256SUMS and SHA2-512SUMS
+release-checksums: bootstrap-script ## Generate SHA256SUMS and SHA512SUMS
 	go run ./scripts/cmd/generate-checksums --dir $(DIST_RELEASE)
 
 release-verify-checksums: ## Verify checksums in dist/release
@@ -264,9 +267,9 @@ release-verify-checksums: ## Verify checksums in dist/release
 		echo "=== SHA256SUMS ===" && \
 		shasum -a 256 -c SHA256SUMS 2>&1 | grep -v ': OK$$' || echo "All SHA256 checksums OK"; \
 	fi && \
-	if [ -f SHA2-512SUMS ]; then \
-		echo "=== SHA2-512SUMS ===" && \
-		shasum -a 512 -c SHA2-512SUMS 2>&1 | grep -v ': OK$$' || echo "All SHA512 checksums OK"; \
+	if [ -f SHA512SUMS ]; then \
+		echo "=== SHA512SUMS ===" && \
+		shasum -a 512 -c SHA512SUMS 2>&1 | grep -v ': OK$$' || echo "All SHA512 checksums OK"; \
 	fi
 	@echo "[ok] Checksum verification complete"
 
@@ -304,10 +307,48 @@ release-export-minisign-key: ## Copy minisign public key to dist/release
 		exit 1; \
 	fi
 
+release-export-keys: release-export-minisign-key release-export-key ## Export all public signing keys
+
 verify-release-key: ## Verify PGP key is public-only
 	./scripts/verify-public-key.sh $(DIST_RELEASE)/$(PUBLIC_KEY_NAME)
 
-release-upload: release-notes verify-release-key ## Upload assets and update release notes
+release-verify-key: verify-release-key ## Verify PGP key is public-only (alias)
+
+release-verify-minisign-pubkey: build ## Verify minisign public key matches embedded trust anchor
+	@if [ -z "$(FILE)" ]; then \
+		if [ -f "$(DIST_RELEASE)/$(MINISIGN_PUB_NAME)" ]; then \
+			FILE="$(DIST_RELEASE)/$(MINISIGN_PUB_NAME)"; \
+		else \
+			echo "usage: make release-verify-minisign-pubkey FILE=path/to/key.pub" >&2; exit 1; \
+		fi; \
+	fi; \
+	echo "[verify] Minisign public key: $$FILE"; \
+	embedded=$$($(BUILD_ARTIFACT) --self-verify --json 2>/dev/null | grep -o '"minisignPubkey":"[^"]*"' | cut -d'"' -f4); \
+	file_key=$$(cat "$$FILE" 2>/dev/null | tr -d '\n'); \
+	if [ -z "$$embedded" ]; then echo "error: could not extract embedded pubkey" >&2; exit 1; fi; \
+	if [ -z "$$file_key" ]; then echo "error: could not read $$FILE" >&2; exit 1; fi; \
+	if echo "$$file_key" | grep -q "$$embedded"; then \
+		echo "[ok] Minisign public key matches embedded trust anchor"; \
+	else \
+		echo "error: minisign public key does NOT match embedded trust anchor" >&2; \
+		echo "  embedded: $$embedded" >&2; \
+		echo "  file:     $$file_key" >&2; \
+		exit 1; \
+	fi
+
+release-verify-keys: release-verify-key ## Verify all exported public keys
+	@if [ -f "$(DIST_RELEASE)/$(MINISIGN_PUB_NAME)" ]; then \
+		$(MAKE) release-verify-minisign-pubkey FILE=$(DIST_RELEASE)/$(MINISIGN_PUB_NAME); \
+	else \
+		echo "[skip] No minisign public key in $(DIST_RELEASE)"; \
+	fi
+
+release-verify-signatures: ## Verify minisign and PGP signatures on checksum manifests
+	SHELLSENTRY_MINISIGN_PUB=$(SHELLSENTRY_MINISIGN_PUB) SHELLSENTRY_GPG_HOMEDIR=$(SHELLSENTRY_GPG_HOMEDIR) ./scripts/verify-signatures.sh $(DIST_RELEASE)
+
+release-verify: release-verify-checksums release-verify-signatures release-verify-keys ## Full post-signing release verification
+
+release-upload: release-notes release-verify-keys ## Upload assets and update release notes
 	./scripts/upload-release-assets.sh $(RELEASE_TAG) $(DIST_RELEASE)
 
 release-clean: ## Remove dist/release contents

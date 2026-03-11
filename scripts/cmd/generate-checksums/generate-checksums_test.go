@@ -27,12 +27,12 @@ func TestRun_GeneratesChecksums(t *testing.T) {
 	}
 
 	sha256Path := filepath.Join(dir, "SHA256SUMS")
-	sha512Path := filepath.Join(dir, "SHA2-512SUMS")
+	sha512Path := filepath.Join(dir, "SHA512SUMS")
 	if _, err := os.Stat(sha256Path); err != nil {
 		t.Fatalf("SHA256SUMS not created: %v", err)
 	}
 	if _, err := os.Stat(sha512Path); err != nil {
-		t.Fatalf("SHA2-512SUMS not created: %v", err)
+		t.Fatalf("SHA512SUMS not created: %v", err)
 	}
 
 	content, err := os.ReadFile(sha256Path)

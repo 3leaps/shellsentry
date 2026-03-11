@@ -81,13 +81,13 @@ func buildVerifyInfo(version, buildTime, gitCommit string) *VerifyInfo {
 	info.Asset = assetName()
 	baseURL := fmt.Sprintf("https://github.com/3leaps/shellsentry/releases/download/v%s", version)
 	info.URLs = &VerifyURLs{
-		SHA512SUMS:        baseURL + "/SHA2-512SUMS",
-		SHA512SUMSMinisig: baseURL + "/SHA2-512SUMS.minisig",
+		SHA512SUMS:        baseURL + "/SHA512SUMS",
+		SHA512SUMSMinisig: baseURL + "/SHA512SUMS.minisig",
 		SHA256SUMS:        baseURL + "/SHA256SUMS",
 		SHA256SUMSMinisig: baseURL + "/SHA256SUMS.minisig",
 	}
 
-	// Try to fetch expected hash (prefer SHA2-512SUMS)
+	// Try to fetch expected hash (prefer SHA512SUMS)
 	expectedHash, hashAlgo, err := fetchExpectedHash(version, info.Asset)
 	if err != nil {
 		info.HashError = err.Error()
@@ -137,7 +137,7 @@ func checksumCommand(hashAlgo string) string {
 func minisignCommand(version, pubkey, hashAlgo string) string {
 	checksumFile := "SHA256SUMS"
 	if hashAlgo == "sha512" {
-		checksumFile = "SHA2-512SUMS"
+		checksumFile = "SHA512SUMS"
 	}
 	return fmt.Sprintf(`curl -sL https://github.com/3leaps/shellsentry/releases/download/v%s/%s -o /tmp/%s
 curl -sL https://github.com/3leaps/shellsentry/releases/download/v%s/%s.minisig -o /tmp/%s.minisig
@@ -148,12 +148,12 @@ func fetchExpectedHash(version, asset string) (hash, algo string, err error) {
 	baseURL := fmt.Sprintf("https://github.com/3leaps/shellsentry/releases/download/v%s", version)
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	// Try SHA2-512SUMS first
+	// Try SHA512SUMS first
 	checksumFiles := []struct {
 		name string
 		algo string
 	}{
-		{"SHA2-512SUMS", "sha512"},
+		{"SHA512SUMS", "sha512"},
 		{"SHA256SUMS", "sha256"},
 	}
 
@@ -209,8 +209,8 @@ func printVerifyText(w io.Writer, info *VerifyInfo) {
 
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Release URLs:")
-	_, _ = fmt.Fprintf(w, "  SHA2-512SUMS:         %s\n", info.URLs.SHA512SUMS)
-	_, _ = fmt.Fprintf(w, "  SHA2-512SUMS.minisig: %s\n", info.URLs.SHA512SUMSMinisig)
+	_, _ = fmt.Fprintf(w, "  SHA512SUMS:         %s\n", info.URLs.SHA512SUMS)
+	_, _ = fmt.Fprintf(w, "  SHA512SUMS.minisig: %s\n", info.URLs.SHA512SUMSMinisig)
 	_, _ = fmt.Fprintf(w, "  SHA256SUMS:           %s\n", info.URLs.SHA256SUMS)
 	_, _ = fmt.Fprintf(w, "  SHA256SUMS.minisig:   %s\n", info.URLs.SHA256SUMSMinisig)
 

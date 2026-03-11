@@ -255,8 +255,8 @@ func TestComputeHash(t *testing.T) {
 		useSHA512    bool
 	}{
 		{
-			name:         "SHA512 from SHA2-512SUMS",
-			checksumFile: "SHA2-512SUMS",
+			name:         "SHA512 from SHA512SUMS",
+			checksumFile: "SHA512SUMS",
 			useSHA512:    true,
 		},
 		{
@@ -647,7 +647,7 @@ func TestMinisignCommand(t *testing.T) {
 			version:  "2.0.0",
 			pubkey:   "TESTPUBKEY123",
 			hashAlgo: "sha512",
-			contains: []string{"v2.0.0", "SHA2-512SUMS", "TESTPUBKEY123", "minisign"},
+			contains: []string{"v2.0.0", "SHA512SUMS", "TESTPUBKEY123", "minisign"},
 		},
 	}
 

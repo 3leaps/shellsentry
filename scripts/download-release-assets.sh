@@ -8,5 +8,5 @@ if ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 echo "[download] Release assets for ${TAG} into ${DEST}"
-gh release download "$TAG" --dir "$DEST" --clobber --pattern 'shellsentry_*' --pattern 'SHA256SUMS*' --pattern 'SHA2-512SUMS*' --pattern 'install-shellsentry.sh'
+gh release download "$TAG" --dir "$DEST" --clobber --pattern 'shellsentry_*' --pattern 'SHA256SUMS*' --pattern 'SHA512SUMS*' --pattern 'install-shellsentry.sh'
 echo "[ok] Assets downloaded"

@@ -2,6 +2,10 @@
 
 This document walks maintainers through the build/sign/upload flow for each shellsentry release.
 
+> **Naming note:** Starting with v0.1.4, checksum manifests use `SHA512SUMS`
+> (aligned with sfetch and conventional `sha512sum` naming). Releases v0.1.3 and
+> earlier used `SHA2-512SUMS`. The self-update code falls back gracefully.
+
 ## 1. Prepare & Tag
 
 - [ ] Ensure `main` is clean and `make prepush` passes
@@ -47,46 +51,64 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/custom/gpg/homedir   # optional, default
    make release-download
    ```
 
-3. **Generate & sign checksum manifests** (`SHA256SUMS`, `SHA2-512SUMS`) with minisign + PGP
+3. **Generate checksum manifests** (`SHA256SUMS`, `SHA512SUMS`)
 
    ```bash
    make release-checksums
-   make release-sign
    ```
 
-   Produces: `SHA256SUMS`, `SHA2-512SUMS` plus `.minisig`/`.asc`
-
-4. **Export public keys**
-
-   ```bash
-   make release-export-minisign-key   # -> shellsentry-minisign.pub
-   make release-export-key            # -> shellsentry-release-signing-key.asc
-   ```
-
-5. **Verify exported keys are public-only**
-
-   ```bash
-   make verify-release-key
-   ```
-
-6. **Copy release notes** (requires `docs/releases/$SHELLSENTRY_RELEASE_TAG.md`)
-
-   ```bash
-   make release-notes
-   ```
-
-7. **Verify checksums before upload**
+4. **Verify checksums**
 
    ```bash
    make release-verify-checksums
    ```
 
-8. **Upload signatures and keys**
+5. **Sign checksum manifests** with minisign + PGP
+
    ```bash
-   make release-upload
+   make release-sign
    ```
-   > **Note:** This uploads ALL assets with `--clobber`, including binaries CI already uploaded.
-   > This is intentional for idempotency - rerun safely to fix any mistakes.
+
+   Produces: `SHA256SUMS`, `SHA512SUMS` plus `.minisig`/`.asc`
+
+6. **Verify signatures**
+
+   ```bash
+   make release-verify-signatures
+   ```
+
+7. **Export public keys**
+
+   ```bash
+   make release-export-keys
+   ```
+
+8. **Verify exported keys**
+
+   ```bash
+   make release-verify-keys
+   ```
+
+   Or run all verification in one step:
+
+   ```bash
+   make release-verify
+   ```
+
+9. **Copy release notes** (requires `docs/releases/$SHELLSENTRY_RELEASE_TAG.md`)
+
+   ```bash
+   make release-notes
+   ```
+
+10. **Upload signatures and keys**
+
+    ```bash
+    make release-upload
+    ```
+
+    > **Note:** This uploads ALL assets with `--clobber`, including binaries CI already uploaded.
+    > This is intentional for idempotency - rerun safely to fix any mistakes.
 
 ## 3. Post-Release
 

@@ -16,8 +16,8 @@ if [ ! -f "$NOTES_FILE" ]; then
     exit 1
 fi
 shopt -s nullglob
-ARTIFACTS=("$DIR"/shellsentry_* "$DIR"/SHA256SUMS "$DIR"/SHA2-512SUMS "$DIR"/install-shellsentry.sh)
-SIGNATURES=("$DIR"/SHA256SUMS.minisig "$DIR"/SHA256SUMS.asc "$DIR"/SHA2-512SUMS.minisig "$DIR"/SHA2-512SUMS.asc "$DIR"/*-minisign.pub "$DIR"/*-signing-key.asc)
+ARTIFACTS=("$DIR"/shellsentry_* "$DIR"/SHA256SUMS "$DIR"/SHA512SUMS "$DIR"/install-shellsentry.sh)
+SIGNATURES=("$DIR"/SHA256SUMS.minisig "$DIR"/SHA256SUMS.asc "$DIR"/SHA512SUMS.minisig "$DIR"/SHA512SUMS.asc "$DIR"/*-minisign.pub "$DIR"/*-signing-key.asc)
 if [ ${#ARTIFACTS[@]} -eq 0 ]; then
     echo "no artifacts to upload" >&2
     exit 1
