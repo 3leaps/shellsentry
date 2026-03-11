@@ -7,6 +7,23 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-03-11
+
+### Added
+
+- Composite release verification targets: `release-verify`, `release-verify-signatures`, `release-verify-keys`, `release-export-keys`.
+- `scripts/verify-signatures.sh` for automated minisign and PGP signature verification.
+- `release-verify-minisign-pubkey` target to validate exported key matches embedded trust anchor.
+
+### Changed
+
+- Renamed `SHA2-512SUMS` to `SHA512SUMS` across all code and scripts (aligned with sfetch and `sha512sum` convention).
+- Reordered RELEASE_CHECKLIST.md: verify checksums before signing, verify signatures after.
+
+### Fixed
+
+- Windows ARM64 platform detection in install script: Git Bash under WoW64 emulation reported `x86_64`, causing wrong binary download. Added three-tier `detect_windows_arch()` fallback (RUNNER_ARCH, PowerShell OSArchitecture, PROCESSOR_ARCHITEW6432).
+
 ## [0.1.3] - 2026-03-10
 
 ### Changed

@@ -2,6 +2,33 @@
 
 Note: Keep only the latest three releases here, in newest-to-oldest order.
 
+## v0.1.4
+
+### Highlights
+
+- Release verification aligned to sfetch pattern with composite `make release-verify` gate.
+- Checksum manifest naming aligned to `SHA512SUMS` (convention match with sfetch and `sha512sum`).
+- Windows ARM64 install script fix: correct binary now downloaded on ARM64 hardware.
+
+### Added
+
+- `release-verify` composite target runs checksums, signatures, and key verification in one step.
+- `release-verify-signatures` + `scripts/verify-signatures.sh` for automated signature validation.
+- `release-verify-keys` validates both PGP and minisign public keys.
+- `release-export-keys` exports both key types in one command.
+- `release-verify-minisign-pubkey` validates exported key matches embedded trust anchor.
+
+### Changed
+
+- Renamed `SHA2-512SUMS` -> `SHA512SUMS` across Go source, scripts, and Makefile. Self-update falls back to SHA256SUMS for older releases.
+- RELEASE_CHECKLIST.md reordered: verify checksums before signing, verify signatures after.
+
+### Fixed
+
+- Windows ARM64 platform detection: `detect_windows_arch()` with three-tier fallback (RUNNER_ARCH, PowerShell OSArchitecture, PROCESSOR_ARCHITEW6432) prevents WoW64 emulation from selecting wrong binary.
+
+---
+
 ## v0.1.3
 
 ### Highlights
@@ -19,12 +46,6 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
 - golang.org/x/sys: 0.33.0 -> 0.42.0.
 - github.com/spf13/pflag: 1.0.9 -> 1.0.10.
 - Pinned tool minimums: sfetch v0.4.5, goneat v0.5.7.
-- Commit attribution now requires model vendor URL, tool URL, Role trailer, and full Committer-of-Record identity.
-- Role catalog reorganized into categorized tables.
-
-### Added
-
-- `.goneat/dependencies.yaml` with vulnerability scanning, license compliance, and package cooling policy.
 
 ### Security
 
@@ -44,29 +65,3 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
 
 - Suppressed gosec G302 false positive for executable permissions on self-update binary.
 - Added SDR documentation for G304 (file inclusion) and G302 (file permissions) suppressions.
-
----
-
-## v0.1.1
-
-### Highlights
-
-- Self-verification and self-update capabilities with cryptographic verification.
-- Embedded minisign public key as build-time trust anchor.
-- Follows sfetch patterns for secure update workflow.
-
-### Added
-
-- `--self-verify` flag displays verification instructions and embedded trust anchors.
-- `--self-update` flag performs cryptographically verified updates from GitHub releases.
-- `--self-update-force` allows major version jumps and dev build updates.
-- `--self-update-dir` specifies custom install directory.
-- `--json` flag for machine-readable `--self-verify` output.
-- SHA2-512SUMS support with automatic fallback to SHA256SUMS.
-
-### Security
-
-- Minisign signature verification is mandatory before trusting any checksum.
-- Atomic binary replacement with rollback on failure.
-- Dev builds blocked from self-update unless `--self-update-force` is used.
-- Major version jumps require explicit `--self-update-force` confirmation.
