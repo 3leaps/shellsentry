@@ -25,6 +25,10 @@ if [ -z "$pin_nov" ]; then
 	exit 1
 fi
 
+# Disable pathname expansion so unquoted $line cannot expand globs against CWD
+# (e.g. "sfetch *" with a file named like the pin must not fail-open).
+set -f
+
 # Walk whitespace-separated tokens; compare each version-like token exactly.
 # A token is version-like if, after optional leading "v", it starts with a digit.
 for word in $line; do

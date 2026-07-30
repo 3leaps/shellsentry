@@ -488,6 +488,6 @@ dogfood: build ## Validate sfetch install script with shellsentry
 	if [ -x "$(SFETCH_LOCAL)" ]; then SFETCH_BIN="$(SFETCH_LOCAL)"; \
 	elif command -v sfetch >/dev/null 2>&1; then SFETCH_BIN="$$(command -v sfetch)"; fi; \
 	if [ -z "$$SFETCH_BIN" ]; then echo "[!!] sfetch not found"; exit 1; fi; \
-	$$SFETCH_BIN --repo 3leaps/sfetch --latest --asset-match "install-sfetch.sh" --output - \
+	$$SFETCH_BIN --repo 3leaps/sfetch --tag $(SFETCH_VERSION) --asset-match "install-sfetch.sh" --output - \
 		| ./$(BUILD_ARTIFACT) --exit-on-danger; \
 	echo "[ok] sfetch install script passed shellsentry analysis"

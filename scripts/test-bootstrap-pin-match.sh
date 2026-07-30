@@ -79,4 +79,19 @@ else
 	pass "empty pin rejected"
 fi
 
+# --- glob / pathname expansion must not fail-open ---
+# A version line with "*" must not match via CWD filename equal to the pin.
+glob_tmp="$(mktemp -d "${TMPDIR:-/tmp}/shs-pin-glob.XXXXXX")"
+(
+	cd "$glob_tmp" || exit 1
+	# Create a CWD file named like the normalized pin.
+	: >"0.4.9"
+	if "$MATCH" "sfetch *" "v0.4.9"; then
+		fail "glob metacharacter in version line must not match via CWD expand"
+	else
+		pass "glob version line rejected (no pathname expansion fail-open)"
+	fi
+)
+rm -rf "$glob_tmp"
+
 echo "[ok] bootstrap pin-match regression complete"
