@@ -147,7 +147,7 @@ tools:
     description: Advanced Go static analysis
     kind: go
     detect_command: staticcheck -version
-    install_package: honnef.co/go/tools/cmd/staticcheck@latest
+    install_package: honnef.co/go/tools/cmd/staticcheck@v0.6.1
     version_args:
       - -version
     check_args:
