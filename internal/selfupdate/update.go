@@ -95,10 +95,15 @@ func Update(opts UpdateOptions) (*UpdateResult, error) {
 		return result, nil
 	}
 
-	// Find required assets
-	archiveAsset := findAsset(release.Assets, assetName())
+	// Find required assets (platform selection is a pure helper so darwin/amd64
+	// retirement is unit-testable from any host).
+	wanted := assetNameFor(runtime.GOOS, runtime.GOARCH)
+	archiveAsset := findAsset(release.Assets, wanted)
 	if archiveAsset == nil {
-		return nil, fmt.Errorf("archive asset not found: %s", assetName())
+		if isDarwinAMD64(runtime.GOOS, runtime.GOARCH) {
+			return nil, fmt.Errorf("%s", darwinAMD64RetirementMessage(release.TagName))
+		}
+		return nil, fmt.Errorf("archive asset not found: %s", wanted)
 	}
 
 	// Try SHA512SUMS first (shellsentry preference), fall back to SHA256SUMS

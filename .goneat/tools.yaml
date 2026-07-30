@@ -76,14 +76,14 @@ tools:
         - scoop
         - winget
     version_scheme: semver
-    minimum_version: 1.21.0
-    recommended_version: 1.22.0
+    minimum_version: 1.25.12
+    recommended_version: 1.26.5
   go-licenses:
     name: go-licenses
     description: License compliance for Go dependencies
     kind: go
     detect_command: go-licenses -h
-    install_package: github.com/google/go-licenses@latest
+    install_package: github.com/google/go-licenses@v1.5.0
     check_args:
       - -h
     installer_priority:
@@ -134,7 +134,7 @@ tools:
     description: Go vulnerability checker
     kind: go
     detect_command: govulncheck -version
-    install_package: golang.org/x/vuln/cmd/govulncheck@latest
+    install_package: golang.org/x/vuln/cmd/govulncheck@v1.6.0
     version_args:
       - -version
     check_args:
@@ -147,7 +147,7 @@ tools:
     description: Advanced Go static analysis
     kind: go
     detect_command: staticcheck -version
-    install_package: honnef.co/go/tools/cmd/staticcheck@latest
+    install_package: honnef.co/go/tools/cmd/staticcheck@v0.6.1
     version_args:
       - -version
     check_args:

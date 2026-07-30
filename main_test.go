@@ -10,14 +10,20 @@ package main
 import (
 	"bytes"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-// buildBinary builds the test binary once per test run
+// buildBinary builds the test binary once per test run.
+// On Windows the output must end in .exe or exec.Command cannot launch it.
 func buildBinary(t *testing.T) string {
 	t.Helper()
-	binary := "bin/shellsentry_test"
+	binary := filepath.Join("bin", "shellsentry_test")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	cmd := exec.Command("go", "build", "-o", binary, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build binary: %v\n%s", err, out)

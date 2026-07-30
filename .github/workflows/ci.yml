@@ -1,0 +1,195 @@
+---
+name: CI
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+  GH_TOKEN: ${{ github.token }}
+  SFETCH_GITHUB_TOKEN: ${{ github.token }}
+
+jobs:
+  test:
+    name: Linux quality (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update && \
+            sudo apt-get install -y --no-install-recommends \
+            yamllint shellcheck minisign
+
+      - name: Install sfetch (pinned)
+        run: |
+          set -euo pipefail
+          TAG=$(make -s print-sfetch-version)
+          test -n "$TAG"
+          curl -fsSL "https://github.com/3leaps/sfetch/releases/download/${TAG}/install-sfetch.sh" | \
+            bash -s -- --dir bin --tag "$TAG" --require-minisign
+          ./bin/sfetch --version
+
+      - name: Install goneat via sfetch (pinned)
+        run: |
+          set -euo pipefail
+          ./bin/sfetch --repo fulmenhq/goneat \
+            --tag v0.5.15 \
+            --dest-dir bin \
+            --require-minisign
+          ./bin/goneat version
+
+      - name: Quality
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          make prepush
+
+  test-linux-arm64:
+    name: Linux quality (arm64)
+    runs-on: ubuntu-latest-arm64-s
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update && \
+            sudo apt-get install -y --no-install-recommends \
+            yamllint shellcheck minisign
+
+      - name: Install sfetch (pinned)
+        run: |
+          set -euo pipefail
+          TAG=$(make -s print-sfetch-version)
+          curl -fsSL "https://github.com/3leaps/sfetch/releases/download/${TAG}/install-sfetch.sh" | \
+            bash -s -- --dir bin --tag "$TAG" --require-minisign
+          ./bin/sfetch --version
+
+      - name: Install goneat via sfetch (pinned)
+        run: |
+          set -euo pipefail
+          ./bin/sfetch --repo fulmenhq/goneat \
+            --tag v0.5.15 \
+            --dest-dir bin \
+            --require-minisign
+          ./bin/goneat version
+
+      - name: Test and build
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          make test build
+
+  windows-dogfood-x64:
+    name: Windows dogfood (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+
+      - name: Install minisign
+        shell: pwsh
+        run: |
+          choco install minisign -y --no-progress
+
+      - name: Install sfetch (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=$(make -s print-sfetch-version)
+          curl -fsSL "https://github.com/3leaps/sfetch/releases/download/${TAG}/install-sfetch.sh" | \
+            bash -s -- --dir bin --tag "$TAG" --require-minisign
+          ./bin/sfetch.exe --version || ./bin/sfetch --version
+
+      - name: Install goneat via sfetch
+        shell: bash
+        run: |
+          set -euo pipefail
+          SFETCH_BIN=./bin/sfetch
+          if [ -x ./bin/sfetch.exe ]; then SFETCH_BIN=./bin/sfetch.exe; fi
+          "$SFETCH_BIN" --repo fulmenhq/goneat \
+            --tag v0.5.15 \
+            --dest-dir bin \
+            --require-minisign
+          if [ -x ./bin/goneat.exe ]; then ./bin/goneat.exe version; else ./bin/goneat version; fi
+
+      - name: Test and build
+        shell: bash
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          go test ./...
+          make build
+
+  windows-dogfood-arm64:
+    name: Windows dogfood (arm64)
+    runs-on: windows-latest-arm64-s
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+
+      - name: Install minisign
+        shell: pwsh
+        run: |
+          if (Get-Command choco -ErrorAction SilentlyContinue) {
+            choco install minisign -y --no-progress
+          } else {
+            winget install -e --id FrankDenis.Minisign --silent `
+              --accept-source-agreements --accept-package-agreements
+          }
+
+      - name: Install sfetch (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=$(make -s print-sfetch-version)
+          curl -fsSL "https://github.com/3leaps/sfetch/releases/download/${TAG}/install-sfetch.sh" | \
+            bash -s -- --dir bin --tag "$TAG" --require-minisign
+          ./bin/sfetch.exe --version || ./bin/sfetch --version
+
+      - name: Verify install script detects windows arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          lib="$(mktemp)"
+          sed '$d' scripts/install-shellsentry.sh > "$lib"
+          printf '\ndetect_platform\n' >> "$lib"
+          platform="$(bash "$lib" | tr -d '\r\n')"
+          echo "Detected platform via install-shellsentry.sh: $platform"
+          test "$platform" = "windows_arm64"
+
+      - name: Install goneat via sfetch
+        shell: bash
+        run: |
+          set -euo pipefail
+          SFETCH_BIN=./bin/sfetch
+          if [ -x ./bin/sfetch.exe ]; then SFETCH_BIN=./bin/sfetch.exe; fi
+          "$SFETCH_BIN" --repo fulmenhq/goneat \
+            --tag v0.5.15 \
+            --dest-dir bin \
+            --require-minisign
+          if [ -x ./bin/goneat.exe ]; then ./bin/goneat.exe version; else ./bin/goneat version; fi
+
+      - name: Test and build
+        shell: bash
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          go test ./...
+          make build

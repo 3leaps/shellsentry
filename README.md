@@ -114,6 +114,13 @@ sfetch --repo 3leaps/shellsentry --latest --dest-dir ~/.local/bin
 curl -sSfL https://github.com/3leaps/shellsentry/releases/latest/download/install-shellsentry.sh | bash
 ```
 
+Supported release artifacts (from v0.1.5): Linux amd64/arm64, macOS arm64, Windows amd64/arm64.
+macOS Intel (`darwin/amd64`) users should pin the last supporting release:
+
+```bash
+curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.4/install-shellsentry.sh | bash -s -- --tag v0.1.4
+```
+
 ### From source
 
 ```bash

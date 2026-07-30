@@ -38,23 +38,39 @@ MINISIGN_PUB_NAME ?= shellsentry-minisign.pub
 # Tool installation directory (repo-local)
 BIN_DIR := $(CURDIR)/bin
 
-# Pinned tool versions (minimums; existing installs are respected)
-SFETCH_VERSION := v0.4.5
-GONEAT_VERSION ?= v0.5.7
+# Pinned tool versions (bootstrap installs these into BIN_DIR; do not float)
+SFETCH_VERSION := v0.4.9
+GONEAT_VERSION ?= v0.5.15
+GOVULNCHECK_VERSION ?= v1.6.0
+STATICCHECK_VERSION ?= v0.6.1
+
+# Host binary extension: Windows installers write sfetch.exe / goneat.exe
+HOST_GOOS := $(shell go env GOHOSTOS 2>/dev/null || go env GOOS)
+ifeq ($(HOST_GOOS),windows)
+BIN_EXT := .exe
+else
+BIN_EXT :=
+endif
+SFETCH_LOCAL := $(BIN_DIR)/sfetch$(BIN_EXT)
+GONEAT_LOCAL := $(BIN_DIR)/goneat$(BIN_EXT)
 
 # Tool paths (prefer repo-local, fall back to PATH)
-SFETCH = $(shell [ -x "$(BIN_DIR)/sfetch" ] && echo "$(BIN_DIR)/sfetch" || command -v sfetch 2>/dev/null)
-GONEAT = $(shell [ -x "$(BIN_DIR)/goneat" ] && echo "$(BIN_DIR)/goneat" || command -v goneat 2>/dev/null)
+SFETCH = $(shell [ -x "$(SFETCH_LOCAL)" ] && echo "$(SFETCH_LOCAL)" || command -v sfetch$(BIN_EXT) 2>/dev/null || command -v sfetch 2>/dev/null)
+GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -v goneat$(BIN_EXT) 2>/dev/null || command -v goneat 2>/dev/null)
 
 .PHONY: all help build test clean install fmt fmt-check lint check-all version tools prereqs bootstrap bootstrap-force build-all assess
-.PHONY: schema-validate schema-meta sarif-validate precommit prepush
+.PHONY: schema-validate schema-meta sarif-validate precommit prepush govulncheck
 .PHONY: release-download release-checksums release-verify-checksums release-sign
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
 .PHONY: release-clean bootstrap-script verify-release-key
-.PHONY: package-all
+.PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match
 
 all: build
+
+# Echo SFETCH_VERSION via make (CI install smoke should not parse Makefile).
+print-sfetch-version: ## Print bootstrap pin (SFETCH_VERSION)
+	@echo $(SFETCH_VERSION)
 
 help: ## Show this help
 	@echo "shellsentry - Static risk assessment for shell scripts"
@@ -68,11 +84,11 @@ help: ## Show this help
 # Bootstrap - Trust Anchor Chain
 # -----------------------------------------------------------------------------
 #
-# Trust chain: curl -> sfetch -> (future: shellsentry validates install scripts!)
+# Trust chain: curl -> sfetch (pinned release) -> goneat (pinned via sfetch)
 #
-# sfetch (3leaps/sfetch) is the trust anchor - a minimal, auditable binary fetcher.
-# Once shellsentry is functional, we'll use it to validate sfetch's install script
-# before execution - eating our own dogfood.
+# Pins land in BIN_DIR. Stale PATH copies are ignored when a repo-local binary
+# is present; bootstrap reinstalls when the local binary version does not match
+# the declared pin.
 
 bootstrap: ## Install development tools via trust chain
 	@echo "Bootstrapping shellsentry development environment..."
@@ -89,63 +105,67 @@ bootstrap: ## Install development tools via trust chain
 	fi
 	@echo "[ok] curl found"
 	@echo ""
-	@# Step 1: Install sfetch (trust anchor)
+	@# Step 1: Install sfetch at declared pin into BIN_DIR (extension-aware)
 	@mkdir -p "$(BIN_DIR)"
-	@if [ ! -x "$(BIN_DIR)/sfetch" ] && ! command -v sfetch >/dev/null 2>&1; then \
-		echo "[..] Installing sfetch (trust anchor)..."; \
-		curl -fsSL https://github.com/3leaps/sfetch/releases/download/$(SFETCH_VERSION)/install-sfetch.sh | bash -s -- --dest "$(BIN_DIR)"; \
-	else \
-		echo "[ok] sfetch already installed"; \
+	@need_sfetch=1; \
+	if [ -x "$(SFETCH_LOCAL)" ]; then \
+		sf_ver="$$("$(SFETCH_LOCAL)" --version 2>/dev/null | head -n1 || true)"; \
+		if ./scripts/version-matches-pin.sh "$$sf_ver" "$(SFETCH_VERSION)"; then \
+			need_sfetch=0; \
+			echo "[ok] sfetch $(SFETCH_VERSION) already in $(BIN_DIR)"; \
+		else \
+			echo "[..] sfetch pin mismatch (have: $$sf_ver; want: $(SFETCH_VERSION)); reinstalling..."; \
+			rm -f "$(BIN_DIR)/sfetch" "$(BIN_DIR)/sfetch.exe"; \
+		fi; \
+	fi; \
+	if [ "$$need_sfetch" -eq 1 ]; then \
+		echo "[..] Installing sfetch $(SFETCH_VERSION) (trust anchor)..."; \
+		curl -fsSL https://github.com/3leaps/sfetch/releases/download/$(SFETCH_VERSION)/install-sfetch.sh | bash -s -- \
+			--dir "$(BIN_DIR)" --tag "$(SFETCH_VERSION)" --require-minisign; \
 	fi
-	@# Verify sfetch
-	@SFETCH_BIN=""; \
-	if [ -x "$(BIN_DIR)/sfetch" ]; then SFETCH_BIN="$(BIN_DIR)/sfetch"; \
-	elif command -v sfetch >/dev/null 2>&1; then SFETCH_BIN="$$(command -v sfetch)"; fi; \
-	if [ -z "$$SFETCH_BIN" ]; then echo "[!!] sfetch installation failed"; exit 1; fi; \
-	echo "[ok] sfetch: $$SFETCH_BIN"
+	@if [ ! -x "$(SFETCH_LOCAL)" ]; then echo "[!!] sfetch installation failed (expected $(SFETCH_LOCAL))"; exit 1; fi
+	@echo "[ok] sfetch: $$("$(SFETCH_LOCAL)" --version 2>&1 | head -n1) ($(SFETCH_LOCAL))"
 	@echo ""
-	@# Step 2: Install goneat via sfetch
-	@SFETCH_BIN=""; \
-	if [ -x "$(BIN_DIR)/sfetch" ]; then SFETCH_BIN="$(BIN_DIR)/sfetch"; \
-	elif command -v sfetch >/dev/null 2>&1; then SFETCH_BIN="$$(command -v sfetch)"; fi; \
-	if [ ! -x "$(BIN_DIR)/goneat" ] && ! command -v goneat >/dev/null 2>&1; then \
+	@# Step 2: Install goneat at declared pin into BIN_DIR via sfetch
+	@need_goneat=1; \
+	if [ -x "$(GONEAT_LOCAL)" ]; then \
+		gn_ver="$$("$(GONEAT_LOCAL)" version 2>/dev/null | head -n1 || true)"; \
+		if ./scripts/version-matches-pin.sh "$$gn_ver" "$(GONEAT_VERSION)"; then \
+			need_goneat=0; \
+			echo "[ok] goneat $(GONEAT_VERSION) already in $(BIN_DIR)"; \
+		else \
+			echo "[..] goneat pin mismatch (have: $$gn_ver; want: $(GONEAT_VERSION)); reinstalling..."; \
+			rm -f "$(BIN_DIR)/goneat" "$(BIN_DIR)/goneat.exe"; \
+		fi; \
+	fi; \
+	if [ "$$need_goneat" -eq 1 ]; then \
 		echo "[..] Installing goneat $(GONEAT_VERSION) via sfetch..."; \
-		$$SFETCH_BIN --repo fulmenhq/goneat --tag $(GONEAT_VERSION) --dest-dir "$(BIN_DIR)"; \
-	else \
-		echo "[ok] goneat already installed"; \
+		"$(SFETCH_LOCAL)" --repo fulmenhq/goneat --tag $(GONEAT_VERSION) --dest-dir "$(BIN_DIR)" \
+			--cache-dir "$(CURDIR)/.cache/sfetch" --require-minisign; \
 	fi
-	@# Verify goneat
-	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
-	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
-	if [ -z "$$GONEAT_BIN" ]; then echo "[!!] goneat installation failed"; exit 1; fi; \
-	echo "[ok] goneat: $$($$GONEAT_BIN version 2>&1 | head -n1)"
+	@if [ ! -x "$(GONEAT_LOCAL)" ]; then echo "[!!] goneat installation failed (expected $(GONEAT_LOCAL))"; exit 1; fi
+	@echo "[ok] goneat: $$("$(GONEAT_LOCAL)" version 2>&1 | head -n1)"
 	@echo ""
-	@# Step 3: Install foundation tools via goneat
+	@# Step 3: Install foundation tools via goneat (best-effort locally).
+	@# Gate tools in tools.yaml must be version-pinned (no @latest).
 	@echo "[..] Installing foundation tools via goneat..."
-	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
-	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
-	$$GONEAT_BIN doctor tools --scope foundation --install --yes 2>/dev/null || \
+	@"$(GONEAT_LOCAL)" doctor tools --scope foundation --install --yes 2>/dev/null || \
 		echo "[!!] goneat doctor tools failed, some tools may need manual installation"
 	@echo ""
-	@# Future: Step 4 - use shellsentry to validate scripts before execution
-	@# Once shellsentry is functional:
-	@#   $$SFETCH_BIN --repo 3leaps/sfetch --asset-match "install-sfetch.sh" --output - | ./bin/shellsentry --exit-on-danger
 	@echo "[ok] Bootstrap complete"
 	@echo ""
 	@echo "Repo-local tools installed to $(BIN_DIR)"
 	@echo "Run 'make build' to build shellsentry"
 
-bootstrap-force: ## Force reinstall all tools
-	@rm -f "$(BIN_DIR)/sfetch" "$(BIN_DIR)/goneat"
+bootstrap-force: ## Force reinstall repo-local sfetch and goneat, then bootstrap
+	@rm -f "$(BIN_DIR)/sfetch" "$(BIN_DIR)/sfetch.exe" "$(BIN_DIR)/goneat" "$(BIN_DIR)/goneat.exe"
 	@$(MAKE) bootstrap
 
 tools: ## Verify external tools are available
 	@echo "Verifying tools..."
 	@# Use goneat doctor if available
 	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
+	if [ -x "$(GONEAT_LOCAL)" ]; then GONEAT_BIN="$(GONEAT_LOCAL)"; \
 	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
 	if [ -n "$$GONEAT_BIN" ]; then \
 		$$GONEAT_BIN doctor tools --scope foundation 2>&1 || true; \
@@ -162,7 +182,7 @@ prereqs: tools ## Check prerequisites (alias for tools)
 
 fmt: ## Format code
 	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
+	if [ -x "$(GONEAT_LOCAL)" ]; then GONEAT_BIN="$(GONEAT_LOCAL)"; \
 	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
 	if [ -n "$$GONEAT_BIN" ]; then \
 		$$GONEAT_BIN format --types go,markdown --folders .; \
@@ -182,13 +202,9 @@ fmt-check: ## Check code formatting
 		fi; \
 	fi
 
-lint: ## Run linters
+lint: ## Run linters (staticcheck pin: STATICCHECK_VERSION)
 	go vet ./...
-	@if command -v staticcheck >/dev/null 2>&1; then \
-		staticcheck ./...; \
-	else \
-		echo "[!!] staticcheck not found, skipping (run 'make bootstrap')"; \
-	fi
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
 
 test: ## Run tests
 	go test -v -race ./...
@@ -196,15 +212,18 @@ test: ## Run tests
 check-all: fmt-check lint test build ## Run all checks
 	@echo "[ok] All checks passed"
 
-precommit: check-all schema-validate ## Local pre-commit checks
+govulncheck: ## Run pinned govulncheck vulnerability scan
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	@echo "[ok] Pre-commit checks passed"
 
-prepush: precommit sarif-validate ## Local pre-push checks
+prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match ## Local pre-push checks
 	@echo "[ok] Pre-push checks passed"
 
 assess: ## Run goneat assess (format, lint, security)
 	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
+	if [ -x "$(GONEAT_LOCAL)" ]; then GONEAT_BIN="$(GONEAT_LOCAL)"; \
 	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
 	if [ -z "$$GONEAT_BIN" ]; then echo "[!!] goneat not found (run 'make bootstrap')"; exit 1; fi; \
 	$$GONEAT_BIN assess --categories format,lint --format concise
@@ -217,9 +236,8 @@ build: ## Build for current platform
 		-o $(BUILD_ARTIFACT) $(MAIN)
 	@echo "[ok] Built $(BUILD_ARTIFACT)"
 
-build-all: ## Build for all platforms
+build-all: ## Build for all supported platforms (no darwin/amd64 as of v0.1.5)
 	@mkdir -p dist/release
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-darwin-amd64     $(MAIN)
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-darwin-arm64     $(MAIN)
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-linux-amd64      $(MAIN)
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-linux-arm64      $(MAIN)
@@ -227,9 +245,14 @@ build-all: ## Build for all platforms
 	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-windows-arm64.exe $(MAIN)
 	@echo "[ok] Built all platforms to dist/release/"
 
+# Drop any prior-matrix leftovers (e.g. retired darwin/amd64 archives) is inside
+# the recipe below so set -eu applies to cleanup + packaging in one shell.
 package-all: build-all ## Package release archives in dist/release
-	@set -euo pipefail; \
-	for pair in "darwin amd64" "darwin arm64" "linux amd64" "linux arm64" "windows amd64" "windows arm64"; do \
+	@set -eu; \
+	rm -f dist/release/$(NAME)_darwin_amd64.tar.gz \
+		dist/release/$(NAME)-darwin-amd64 \
+		dist/release/$(NAME)-darwin-amd64.exe; \
+	for pair in "darwin arm64" "linux amd64" "linux arm64" "windows amd64" "windows arm64"; do \
 		set -- $$pair; \
 		os="$$1"; arch="$$2"; \
 		base="$(NAME)-$${os}-$${arch}"; \
@@ -260,19 +283,32 @@ bootstrap-script: ## Copy install script into release directory
 release-checksums: bootstrap-script ## Generate SHA256SUMS and SHA512SUMS
 	go run ./scripts/cmd/generate-checksums --dir $(DIST_RELEASE)
 
-release-verify-checksums: ## Verify checksums in dist/release
+release-verify-checksums: ## Verify checksums in dist/release (fail-closed; portable /bin/sh)
 	@if [ ! -d "$(DIST_RELEASE)" ]; then echo "error: $(DIST_RELEASE) not found (run make release-download first)" >&2; exit 1; fi
 	@echo "Verifying checksums in $(DIST_RELEASE)..."
-	@cd $(DIST_RELEASE) && \
-	if [ -f SHA256SUMS ]; then \
-		echo "=== SHA256SUMS ===" && \
-		shasum -a 256 -c SHA256SUMS 2>&1 | grep -v ': OK$$' || echo "All SHA256 checksums OK"; \
-	fi && \
-	if [ -f SHA512SUMS ]; then \
-		echo "=== SHA512SUMS ===" && \
-		shasum -a 512 -c SHA512SUMS 2>&1 | grep -v ': OK$$' || echo "All SHA512 checksums OK"; \
-	fi
-	@echo "[ok] Checksum verification complete"
+	@set -eu; \
+	cd "$(DIST_RELEASE)"; \
+	if [ ! -s SHA256SUMS ]; then \
+		echo "error: SHA256SUMS missing or empty in $(DIST_RELEASE)" >&2; \
+		exit 1; \
+	fi; \
+	if [ ! -s SHA512SUMS ]; then \
+		echo "error: SHA512SUMS missing or empty in $(DIST_RELEASE)" >&2; \
+		exit 1; \
+	fi; \
+	echo "=== SHA256SUMS ==="; \
+	shasum -a 256 -c SHA256SUMS; \
+	echo "=== SHA512SUMS ==="; \
+	shasum -a 512 -c SHA512SUMS; \
+	echo "[ok] Checksum verification complete"
+
+# Negative + positive regression for release-verify-checksums (exit status only).
+test-release-verify-checksums: ## Regression: fail-closed checksum verify (corrupt/absent/empty)
+	@./scripts/test-release-verify-checksums.sh
+
+# Current-pin vs stale-pin coverage for bootstrap version matching (fixed-string).
+test-bootstrap-pin-match: ## Regression: version-matches-pin current + stale cases
+	@./scripts/test-bootstrap-pin-match.sh
 
 release-notes: ## Copy release notes into dist/release
 	@if [ -z "$(RELEASE_TAG)" ]; then echo "error: RELEASE_TAG not set" >&2; exit 1; fi
@@ -349,7 +385,7 @@ release-verify-signatures: ## Verify minisign and PGP signatures on checksum man
 
 release-verify: release-verify-checksums release-verify-signatures release-verify-keys ## Full post-signing release verification
 
-release-upload: release-notes release-verify-keys ## Upload assets and update release notes
+release-upload: release-notes release-verify ## Upload assets (requires full verification chain)
 	./scripts/upload-release-assets.sh $(RELEASE_TAG) $(DIST_RELEASE)
 
 release-clean: ## Remove dist/release contents
@@ -361,14 +397,14 @@ SARIF_FIXTURE ?= testdata/benign/heredoc/basic-heredoc.sh
 
 schema-validate: ## Validate schemas folder (goneat)
 	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
+	if [ -x "$(GONEAT_LOCAL)" ]; then GONEAT_BIN="$(GONEAT_LOCAL)"; \
 	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
 	if [ -z "$$GONEAT_BIN" ]; then echo "[!!] goneat not found (run 'make bootstrap')"; exit 1; fi; \
 	$$GONEAT_BIN validate --include schemas/ --format concise
 
 schema-meta: ## Meta-validate JSON Schemas (goneat)
 	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
+	if [ -x "$(GONEAT_LOCAL)" ]; then GONEAT_BIN="$(GONEAT_LOCAL)"; \
 	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
 	if [ -z "$$GONEAT_BIN" ]; then echo "[!!] goneat not found (run 'make bootstrap')"; exit 1; fi; \
 	$$GONEAT_BIN schema validate-schema --schema-id json-schema-2020-12 schemas/shellsentry-report.schema.json; \
@@ -376,7 +412,7 @@ schema-meta: ## Meta-validate JSON Schemas (goneat)
 
 sarif-validate: build schema-validate ## Validate SARIF output against SARIF schema (goneat)
 	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
+	if [ -x "$(GONEAT_LOCAL)" ]; then GONEAT_BIN="$(GONEAT_LOCAL)"; \
 	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
 	if [ -z "$$GONEAT_BIN" ]; then echo "[!!] goneat not found (run 'make bootstrap')"; exit 1; fi; \
 	tmp="$$(mktemp /tmp/shellsentry-sarif.XXXXXX.json)"; \
@@ -449,9 +485,9 @@ version-major: ## Bump major version
 dogfood: build ## Validate sfetch install script with shellsentry
 	@echo "Validating sfetch install script with shellsentry..."
 	@SFETCH_BIN=""; \
-	if [ -x "$(BIN_DIR)/sfetch" ]; then SFETCH_BIN="$(BIN_DIR)/sfetch"; \
+	if [ -x "$(SFETCH_LOCAL)" ]; then SFETCH_BIN="$(SFETCH_LOCAL)"; \
 	elif command -v sfetch >/dev/null 2>&1; then SFETCH_BIN="$$(command -v sfetch)"; fi; \
 	if [ -z "$$SFETCH_BIN" ]; then echo "[!!] sfetch not found"; exit 1; fi; \
-	$$SFETCH_BIN --repo 3leaps/sfetch --latest --asset-match "install-sfetch.sh" --output - \
+	$$SFETCH_BIN --repo 3leaps/sfetch --tag $(SFETCH_VERSION) --asset-match "install-sfetch.sh" --output - \
 		| ./$(BUILD_ARTIFACT) --exit-on-danger; \
 	echo "[ok] sfetch install script passed shellsentry analysis"
