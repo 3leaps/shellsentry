@@ -20,9 +20,14 @@ func TestInstallScriptDarwinAMD64GuardHonorsExplicitTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read install script: %v", err)
 	}
+	// Normalize line endings so Windows checkouts (CRLF) match the harness.
+	normalized := strings.ReplaceAll(string(scriptBytes), "\r\n", "\n")
 	// Strip `main "$@"` so the harness can call main() with controlled argv.
-	script := strings.TrimSuffix(string(scriptBytes), "main \"$@\"\n")
-	if script == string(scriptBytes) {
+	script := strings.TrimSuffix(normalized, "main \"$@\"\n")
+	if script == normalized {
+		script = strings.TrimSuffix(normalized, "main \"$@\"")
+	}
+	if script == normalized {
 		t.Fatal("install script missing main invocation suffix")
 	}
 
