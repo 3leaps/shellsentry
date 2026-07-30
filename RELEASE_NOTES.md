@@ -2,6 +2,46 @@
 
 Note: Keep only the latest three releases here, in newest-to-oldest order.
 
+## v0.1.5
+
+### Highlights
+
+- Package and CI/CD hygiene: PR CI, modern Node 24-era Actions, verified bootstrap pins.
+- Release verification is fail-closed; upload requires the full verify chain.
+- darwin/amd64 (Intel Mac) artifacts dropped; last supporting release is v0.1.4.
+
+### Added
+
+- PR/main CI covering Linux amd64/arm64 and Windows amd64/arm64 (org named runners for ARM64).
+- Fail-closed checksum verification regression harness.
+- Pinned govulncheck v1.6.0 in local and CI quality gates.
+
+### Changed
+
+- Go 1.25.12 / toolchain 1.26.5; module bumps for go-minisign, mvdan/sh, x/crypto, x/sys.
+- Bootstrap: sfetch v0.4.9 + goneat v0.5.15 into repo-local `bin/` with minisign and exact tags.
+- Release workflow uses softprops/action-gh-release@v3 (replaces archived Node12 create/upload actions).
+- go-licenses pinned to v1.5.0 on the release path.
+
+### Removed
+
+- `shellsentry_darwin_amd64.tar.gz` is no longer published.
+- Intel Mac recovery:
+
+```bash
+curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.4/install-shellsentry.sh | bash -s -- --tag v0.1.4
+```
+
+### Supported platforms from v0.1.5
+
+| OS      | Architectures   |
+| ------- | --------------- |
+| Linux   | amd64, arm64    |
+| macOS   | arm64           |
+| Windows | amd64, arm64    |
+
+---
+
 ## v0.1.4
 
 ### Highlights
@@ -53,17 +93,3 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
 
 - Zero vulnerability findings after upgrades (was 1 critical, 10 high, 11 medium).
 - Vulnerability gating enforced at `high` severity via goneat dependency protection.
-
----
-
-## v0.1.2
-
-### Highlights
-
-- SDR documentation for gosec suppressions.
-- Test coverage improvements for output and selfupdate packages.
-
-### Security
-
-- Suppressed gosec G302 false positive for executable permissions on self-update binary.
-- Added SDR documentation for G304 (file inclusion) and G302 (file permissions) suppressions.

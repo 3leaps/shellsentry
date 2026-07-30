@@ -104,12 +104,45 @@ func buildVerifyInfo(version, buildTime, gitCommit string) *VerifyInfo {
 	return info
 }
 
-func assetName() string {
+// platformKey returns "goos_goarch" for the given pair (pure helper for tests).
+func platformKey(goos, goarch string) string {
+	return goos + "_" + goarch
+}
+
+// assetNameFor returns the release archive name for goos/goarch.
+func assetNameFor(goos, goarch string) string {
 	ext := ".tar.gz"
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		ext = ".zip"
 	}
-	return fmt.Sprintf("shellsentry_%s_%s%s", runtime.GOOS, runtime.GOARCH, ext)
+	return fmt.Sprintf("shellsentry_%s_%s%s", goos, goarch, ext)
+}
+
+func assetName() string {
+	return assetNameFor(runtime.GOOS, runtime.GOARCH)
+}
+
+// LastDarwinAMD64Tag is the last release that published darwin/amd64 artifacts.
+const LastDarwinAMD64Tag = "v0.1.4"
+
+// isDarwinAMD64 reports whether the platform pair is Intel Mac.
+func isDarwinAMD64(goos, goarch string) bool {
+	return goos == "darwin" && goarch == "amd64"
+}
+
+// darwinAMD64RetirementMessage explains how to recover after the platform drop.
+func darwinAMD64RetirementMessage(targetTag string) string {
+	if targetTag == "" {
+		targetTag = "latest"
+	}
+	return fmt.Sprintf(
+		"shellsentry %s does not ship darwin/amd64 (Intel Mac) artifacts. "+
+			"darwin/amd64 was retired after %s. "+
+			"Pin the last supporting release with the installer: "+
+			"curl -fsSL https://github.com/3leaps/shellsentry/releases/download/%s/install-shellsentry.sh | bash -s -- --tag %s  "+
+			"Or build from source: GOOS=darwin GOARCH=amd64 go build -o shellsentry .",
+		targetTag, LastDarwinAMD64Tag, LastDarwinAMD64Tag, LastDarwinAMD64Tag,
+	)
 }
 
 func checksumCommand(hashAlgo string) string {

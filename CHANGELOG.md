@@ -7,6 +7,33 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-07-30
+
+### Added
+
+- Pull-request and main-branch CI workflow with Linux amd64/arm64 and Windows amd64/arm64 coverage.
+- Fail-closed `make release-verify-checksums` regression harness (`scripts/test-release-verify-checksums.sh`).
+- Pinned `govulncheck@v1.6.0` quality gate in precommit and CI.
+
+### Changed
+
+- Go toolchain: `go 1.25.12` with `toolchain go1.26.5`; CI and release use Go 1.26.5.
+- Dependencies: go-minisign tip, mvdan.cc/sh/v3 v3.13.1, golang.org/x/crypto v0.54.0, golang.org/x/sys v0.47.0.
+- Bootstrap pins: sfetch v0.4.9 and goneat v0.5.15 installed into repo-local `bin/` with `--tag` and `--require-minisign`.
+- Release workflow: replace archived Node12 create/upload actions with `softprops/action-gh-release@v3`; checkout@v5 and setup-go@v6.
+- License check pins `go-licenses@v1.5.0` (no floating `@latest` on the release path).
+- `make release-upload` now depends on the full `release-verify` chain.
+- Supported release matrix is five targets; darwin/amd64 is no longer published.
+
+### Fixed
+
+- `release-verify-checksums` failed open: a failing `shasum -c` could still exit 0. Both SHA256SUMS and SHA512SUMS must now exist, be non-empty, and verify successfully.
+- Bootstrap used invalid sfetch installer flag `--dest` and omitted `--tag` / minisign requirements, so pins were not enforced.
+
+### Removed
+
+- darwin/amd64 (Intel Mac) release artifacts. Last supporting release is v0.1.4. The install script and self-update path surface recovery guidance (`--tag v0.1.4` or build from source).
+
 ## [0.1.4] - 2026-03-11
 
 ### Added
@@ -89,3 +116,11 @@ Semantic Versioning.
 
 - Pinned tool minimums: sfetch v0.3.1 and goneat v0.4.0 (existing installs respected).
 - Normalized formatting across docs, schemas, and testdata with goneat format.
+
+[Unreleased]: https://github.com/3leaps/shellsentry/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/3leaps/shellsentry/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/3leaps/shellsentry/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/3leaps/shellsentry/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/3leaps/shellsentry/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/3leaps/shellsentry/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/3leaps/shellsentry/releases/tag/v0.1.0

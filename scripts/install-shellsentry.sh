@@ -469,6 +469,15 @@ main() {
     platform=$(detect_platform)
     log "Detected platform: ${platform}"
 
+    # macOS Intel (darwin/amd64) artifacts end at v0.1.4. Block unversioned
+    # installs — which default to "latest" and would 404 on the missing
+    # asset — but honor an explicit --tag so the documented recovery path
+    # (--tag v0.1.4) actually works. An invalid tag on Intel Mac still
+    # 404s with its own error rather than being masked by this guard.
+    if [ "$platform" = "darwin_amd64" ] && [ "$tag" = "latest" ]; then
+        err "darwin/amd64 (Intel Mac) is no longer supported as of shellsentry v0.1.5. Pin an explicit --tag v0.1.4 to install the last supporting release, or use Apple Silicon."
+    fi
+
     # Set default install directory
     if [ -z "$install_dir" ]; then
         if [[ "$platform" == windows_* ]]; then

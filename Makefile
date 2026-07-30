@@ -38,23 +38,28 @@ MINISIGN_PUB_NAME ?= shellsentry-minisign.pub
 # Tool installation directory (repo-local)
 BIN_DIR := $(CURDIR)/bin
 
-# Pinned tool versions (minimums; existing installs are respected)
-SFETCH_VERSION := v0.4.5
-GONEAT_VERSION ?= v0.5.7
+# Pinned tool versions (bootstrap installs these into BIN_DIR; do not float)
+SFETCH_VERSION := v0.4.9
+GONEAT_VERSION ?= v0.5.15
+GOVULNCHECK_VERSION ?= v1.6.0
 
 # Tool paths (prefer repo-local, fall back to PATH)
 SFETCH = $(shell [ -x "$(BIN_DIR)/sfetch" ] && echo "$(BIN_DIR)/sfetch" || command -v sfetch 2>/dev/null)
 GONEAT = $(shell [ -x "$(BIN_DIR)/goneat" ] && echo "$(BIN_DIR)/goneat" || command -v goneat 2>/dev/null)
 
 .PHONY: all help build test clean install fmt fmt-check lint check-all version tools prereqs bootstrap bootstrap-force build-all assess
-.PHONY: schema-validate schema-meta sarif-validate precommit prepush
+.PHONY: schema-validate schema-meta sarif-validate precommit prepush govulncheck
 .PHONY: release-download release-checksums release-verify-checksums release-sign
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
 .PHONY: release-clean bootstrap-script verify-release-key
-.PHONY: package-all
+.PHONY: package-all print-sfetch-version test-release-verify-checksums
 
 all: build
+
+# Echo SFETCH_VERSION via make (CI install smoke should not parse Makefile).
+print-sfetch-version: ## Print bootstrap pin (SFETCH_VERSION)
+	@echo $(SFETCH_VERSION)
 
 help: ## Show this help
 	@echo "shellsentry - Static risk assessment for shell scripts"
@@ -68,11 +73,11 @@ help: ## Show this help
 # Bootstrap - Trust Anchor Chain
 # -----------------------------------------------------------------------------
 #
-# Trust chain: curl -> sfetch -> (future: shellsentry validates install scripts!)
+# Trust chain: curl -> sfetch (pinned release) -> goneat (pinned via sfetch)
 #
-# sfetch (3leaps/sfetch) is the trust anchor - a minimal, auditable binary fetcher.
-# Once shellsentry is functional, we'll use it to validate sfetch's install script
-# before execution - eating our own dogfood.
+# Pins land in BIN_DIR. Stale PATH copies are ignored when a repo-local binary
+# is present; bootstrap reinstalls when the local binary version does not match
+# the declared pin.
 
 bootstrap: ## Install development tools via trust chain
 	@echo "Bootstrapping shellsentry development environment..."
@@ -89,55 +94,59 @@ bootstrap: ## Install development tools via trust chain
 	fi
 	@echo "[ok] curl found"
 	@echo ""
-	@# Step 1: Install sfetch (trust anchor)
+	@# Step 1: Install sfetch at declared pin into BIN_DIR
 	@mkdir -p "$(BIN_DIR)"
-	@if [ ! -x "$(BIN_DIR)/sfetch" ] && ! command -v sfetch >/dev/null 2>&1; then \
-		echo "[..] Installing sfetch (trust anchor)..."; \
-		curl -fsSL https://github.com/3leaps/sfetch/releases/download/$(SFETCH_VERSION)/install-sfetch.sh | bash -s -- --dest "$(BIN_DIR)"; \
-	else \
-		echo "[ok] sfetch already installed"; \
+	@need_sfetch=1; \
+	if [ -x "$(BIN_DIR)/sfetch" ]; then \
+		sf_ver="$$("$(BIN_DIR)/sfetch" --version 2>/dev/null | head -n1 || true)"; \
+		pin="$(SFETCH_VERSION)"; pin_nov="$${pin#v}"; \
+		if echo "$$sf_ver" | grep -Eq "$$pin|$$pin_nov"; then \
+			need_sfetch=0; \
+			echo "[ok] sfetch $(SFETCH_VERSION) already in $(BIN_DIR)"; \
+		else \
+			echo "[..] sfetch pin mismatch (have: $$sf_ver; want: $(SFETCH_VERSION)); reinstalling..."; \
+			rm -f "$(BIN_DIR)/sfetch"; \
+		fi; \
+	fi; \
+	if [ "$$need_sfetch" -eq 1 ]; then \
+		echo "[..] Installing sfetch $(SFETCH_VERSION) (trust anchor)..."; \
+		curl -fsSL https://github.com/3leaps/sfetch/releases/download/$(SFETCH_VERSION)/install-sfetch.sh | bash -s -- \
+			--dir "$(BIN_DIR)" --tag "$(SFETCH_VERSION)" --require-minisign; \
 	fi
-	@# Verify sfetch
-	@SFETCH_BIN=""; \
-	if [ -x "$(BIN_DIR)/sfetch" ]; then SFETCH_BIN="$(BIN_DIR)/sfetch"; \
-	elif command -v sfetch >/dev/null 2>&1; then SFETCH_BIN="$$(command -v sfetch)"; fi; \
-	if [ -z "$$SFETCH_BIN" ]; then echo "[!!] sfetch installation failed"; exit 1; fi; \
-	echo "[ok] sfetch: $$SFETCH_BIN"
+	@if [ ! -x "$(BIN_DIR)/sfetch" ]; then echo "[!!] sfetch installation failed"; exit 1; fi
+	@echo "[ok] sfetch: $$("$(BIN_DIR)/sfetch" --version 2>&1 | head -n1) ($(BIN_DIR)/sfetch)"
 	@echo ""
-	@# Step 2: Install goneat via sfetch
-	@SFETCH_BIN=""; \
-	if [ -x "$(BIN_DIR)/sfetch" ]; then SFETCH_BIN="$(BIN_DIR)/sfetch"; \
-	elif command -v sfetch >/dev/null 2>&1; then SFETCH_BIN="$$(command -v sfetch)"; fi; \
-	if [ ! -x "$(BIN_DIR)/goneat" ] && ! command -v goneat >/dev/null 2>&1; then \
+	@# Step 2: Install goneat at declared pin into BIN_DIR via sfetch
+	@need_goneat=1; \
+	if [ -x "$(BIN_DIR)/goneat" ]; then \
+		gn_ver="$$("$(BIN_DIR)/goneat" version 2>/dev/null | head -n1 || true)"; \
+		if echo "$$gn_ver" | grep -Eq "$(GONEAT_VERSION)|$${GONEAT_VERSION#v}"; then \
+			need_goneat=0; \
+			echo "[ok] goneat $(GONEAT_VERSION) already in $(BIN_DIR)"; \
+		else \
+			echo "[..] goneat pin mismatch (have: $$gn_ver; want: $(GONEAT_VERSION)); reinstalling..."; \
+			rm -f "$(BIN_DIR)/goneat"; \
+		fi; \
+	fi; \
+	if [ "$$need_goneat" -eq 1 ]; then \
 		echo "[..] Installing goneat $(GONEAT_VERSION) via sfetch..."; \
-		$$SFETCH_BIN --repo fulmenhq/goneat --tag $(GONEAT_VERSION) --dest-dir "$(BIN_DIR)"; \
-	else \
-		echo "[ok] goneat already installed"; \
+		"$(BIN_DIR)/sfetch" --repo fulmenhq/goneat --tag $(GONEAT_VERSION) --dest-dir "$(BIN_DIR)" \
+			--cache-dir "$(CURDIR)/.cache/sfetch" --require-minisign; \
 	fi
-	@# Verify goneat
-	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
-	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
-	if [ -z "$$GONEAT_BIN" ]; then echo "[!!] goneat installation failed"; exit 1; fi; \
-	echo "[ok] goneat: $$($$GONEAT_BIN version 2>&1 | head -n1)"
+	@if [ ! -x "$(BIN_DIR)/goneat" ]; then echo "[!!] goneat installation failed"; exit 1; fi
+	@echo "[ok] goneat: $$("$(BIN_DIR)/goneat" version 2>&1 | head -n1)"
 	@echo ""
-	@# Step 3: Install foundation tools via goneat
+	@# Step 3: Install foundation tools via goneat (best-effort locally)
 	@echo "[..] Installing foundation tools via goneat..."
-	@GONEAT_BIN=""; \
-	if [ -x "$(BIN_DIR)/goneat" ]; then GONEAT_BIN="$(BIN_DIR)/goneat"; \
-	elif command -v goneat >/dev/null 2>&1; then GONEAT_BIN="$$(command -v goneat)"; fi; \
-	$$GONEAT_BIN doctor tools --scope foundation --install --yes 2>/dev/null || \
+	@"$(BIN_DIR)/goneat" doctor tools --scope foundation --install --yes 2>/dev/null || \
 		echo "[!!] goneat doctor tools failed, some tools may need manual installation"
 	@echo ""
-	@# Future: Step 4 - use shellsentry to validate scripts before execution
-	@# Once shellsentry is functional:
-	@#   $$SFETCH_BIN --repo 3leaps/sfetch --asset-match "install-sfetch.sh" --output - | ./bin/shellsentry --exit-on-danger
 	@echo "[ok] Bootstrap complete"
 	@echo ""
 	@echo "Repo-local tools installed to $(BIN_DIR)"
 	@echo "Run 'make build' to build shellsentry"
 
-bootstrap-force: ## Force reinstall all tools
+bootstrap-force: ## Force reinstall repo-local sfetch and goneat, then bootstrap
 	@rm -f "$(BIN_DIR)/sfetch" "$(BIN_DIR)/goneat"
 	@$(MAKE) bootstrap
 
@@ -196,10 +205,13 @@ test: ## Run tests
 check-all: fmt-check lint test build ## Run all checks
 	@echo "[ok] All checks passed"
 
-precommit: check-all schema-validate ## Local pre-commit checks
+govulncheck: ## Run pinned govulncheck vulnerability scan
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	@echo "[ok] Pre-commit checks passed"
 
-prepush: precommit sarif-validate ## Local pre-push checks
+prepush: precommit sarif-validate test-release-verify-checksums ## Local pre-push checks
 	@echo "[ok] Pre-push checks passed"
 
 assess: ## Run goneat assess (format, lint, security)
@@ -217,9 +229,8 @@ build: ## Build for current platform
 		-o $(BUILD_ARTIFACT) $(MAIN)
 	@echo "[ok] Built $(BUILD_ARTIFACT)"
 
-build-all: ## Build for all platforms
+build-all: ## Build for all supported platforms (no darwin/amd64 as of v0.1.5)
 	@mkdir -p dist/release
-	GOOS=darwin GOARCH=amd64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-darwin-amd64     $(MAIN)
 	GOOS=darwin GOARCH=arm64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-darwin-arm64     $(MAIN)
 	GOOS=linux  GOARCH=amd64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-linux-amd64      $(MAIN)
 	GOOS=linux  GOARCH=arm64  CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/release/$(NAME)-linux-arm64      $(MAIN)
@@ -229,7 +240,11 @@ build-all: ## Build for all platforms
 
 package-all: build-all ## Package release archives in dist/release
 	@set -euo pipefail; \
-	for pair in "darwin amd64" "darwin arm64" "linux amd64" "linux arm64" "windows amd64" "windows arm64"; do \
+	# Drop any prior-matrix leftovers (e.g. retired darwin/amd64 archives).
+	rm -f dist/release/$(NAME)_darwin_amd64.tar.gz \
+		dist/release/$(NAME)-darwin-amd64 \
+		dist/release/$(NAME)-darwin-amd64.exe; \
+	for pair in "darwin arm64" "linux amd64" "linux arm64" "windows amd64" "windows arm64"; do \
 		set -- $$pair; \
 		os="$$1"; arch="$$2"; \
 		base="$(NAME)-$${os}-$${arch}"; \
@@ -260,19 +275,28 @@ bootstrap-script: ## Copy install script into release directory
 release-checksums: bootstrap-script ## Generate SHA256SUMS and SHA512SUMS
 	go run ./scripts/cmd/generate-checksums --dir $(DIST_RELEASE)
 
-release-verify-checksums: ## Verify checksums in dist/release
+release-verify-checksums: ## Verify checksums in dist/release (fail-closed)
 	@if [ ! -d "$(DIST_RELEASE)" ]; then echo "error: $(DIST_RELEASE) not found (run make release-download first)" >&2; exit 1; fi
 	@echo "Verifying checksums in $(DIST_RELEASE)..."
-	@cd $(DIST_RELEASE) && \
-	if [ -f SHA256SUMS ]; then \
-		echo "=== SHA256SUMS ===" && \
-		shasum -a 256 -c SHA256SUMS 2>&1 | grep -v ': OK$$' || echo "All SHA256 checksums OK"; \
-	fi && \
-	if [ -f SHA512SUMS ]; then \
-		echo "=== SHA512SUMS ===" && \
-		shasum -a 512 -c SHA512SUMS 2>&1 | grep -v ': OK$$' || echo "All SHA512 checksums OK"; \
-	fi
-	@echo "[ok] Checksum verification complete"
+	@set -euo pipefail; \
+	cd "$(DIST_RELEASE)"; \
+	if [ ! -s SHA256SUMS ]; then \
+		echo "error: SHA256SUMS missing or empty in $(DIST_RELEASE)" >&2; \
+		exit 1; \
+	fi; \
+	if [ ! -s SHA512SUMS ]; then \
+		echo "error: SHA512SUMS missing or empty in $(DIST_RELEASE)" >&2; \
+		exit 1; \
+	fi; \
+	echo "=== SHA256SUMS ==="; \
+	shasum -a 256 -c SHA256SUMS; \
+	echo "=== SHA512SUMS ==="; \
+	shasum -a 512 -c SHA512SUMS; \
+	echo "[ok] Checksum verification complete"
+
+# Negative + positive regression for release-verify-checksums (exit status only).
+test-release-verify-checksums: ## Regression: fail-closed checksum verify (corrupt/absent/empty)
+	@./scripts/test-release-verify-checksums.sh
 
 release-notes: ## Copy release notes into dist/release
 	@if [ -z "$(RELEASE_TAG)" ]; then echo "error: RELEASE_TAG not set" >&2; exit 1; fi
@@ -349,7 +373,7 @@ release-verify-signatures: ## Verify minisign and PGP signatures on checksum man
 
 release-verify: release-verify-checksums release-verify-signatures release-verify-keys ## Full post-signing release verification
 
-release-upload: release-notes release-verify-keys ## Upload assets and update release notes
+release-upload: release-notes release-verify ## Upload assets (requires full verification chain)
 	./scripts/upload-release-assets.sh $(RELEASE_TAG) $(DIST_RELEASE)
 
 release-clean: ## Remove dist/release contents
