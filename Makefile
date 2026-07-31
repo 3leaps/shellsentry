@@ -39,7 +39,17 @@ MINISIGN_PUB_NAME ?= shellsentry-minisign.pub
 BIN_DIR := $(CURDIR)/bin
 
 # Pinned tool versions (bootstrap installs these into BIN_DIR; do not float)
-SFETCH_VERSION := v0.4.9
+# SFETCH_VERSION is a published consumable release (minisig path requires >= v0.4.11).
+SFETCH_VERSION := v0.4.11
+# Immutable sfetch engine pin (action/repo commit that owns bootstrap-sfetch-verified.sh).
+# Coupled with SFETCH_VERSION: advancing the product pin may require a new engine SHA
+# when SFETCH_BOOTSTRAP_MAX moves (see sfetch docs/cicd-usage-guide.md).
+SFETCH_ENGINE_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
+SFETCH_ENGINE_SHA256 := b45f0b0eb0e94728253de4dfb4306a3965e7266103a22c7cfdf1a6de62308b9a
+# Composite action pin (same commit as engine for this train).
+SFETCH_ACTION_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
+# Embedded consumer trust anchor (do not fetch sfetch-minisign.pub from releases).
+SFETCH_MINISIGN_PUBKEY := RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC
 GONEAT_VERSION ?= v0.5.15
 GOVULNCHECK_VERSION ?= v1.6.0
 STATICCHECK_VERSION ?= v0.6.1
@@ -65,6 +75,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
 .PHONY: release-clean bootstrap-script verify-release-key
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match
+.PHONY: dogfood assert-no-pipe-install-sfetch check-sfetch-pin-freshness
 
 all: build
 
@@ -84,16 +95,14 @@ help: ## Show this help
 # Bootstrap - Trust Anchor Chain
 # -----------------------------------------------------------------------------
 #
-# Trust chain: curl -> sfetch (pinned release) -> goneat (pinned via sfetch)
+# Trust chain: verified sfetch engine (digest-pinned) -> sfetch (pinned release)
+#              -> goneat (pinned via sfetch --require-minisign)
 #
-# Pins land in BIN_DIR. Stale PATH copies are ignored when a repo-local binary
-# is present; bootstrap reinstalls when the local binary version does not match
-# the declared pin.
+# Does not pipe install-sfetch.sh to bash. Pins land in BIN_DIR.
 
-bootstrap: ## Install development tools via trust chain
+bootstrap: ## Install development tools via verified trust chain
 	@echo "Bootstrapping shellsentry development environment..."
 	@echo ""
-	@# Step 0: Verify curl is available (required trust anchor)
 	@if ! command -v curl >/dev/null 2>&1; then \
 		echo "[!!] curl not found (required for bootstrap)"; \
 		echo ""; \
@@ -105,11 +114,10 @@ bootstrap: ## Install development tools via trust chain
 	fi
 	@echo "[ok] curl found"
 	@echo ""
-	@# Step 1: Install sfetch at declared pin into BIN_DIR (extension-aware)
 	@mkdir -p "$(BIN_DIR)"
 	@need_sfetch=1; \
 	if [ -x "$(SFETCH_LOCAL)" ]; then \
-		sf_ver="$$("$(SFETCH_LOCAL)" --version 2>/dev/null | head -n1 || true)"; \
+		sf_ver="$$("$(SFETCH_LOCAL)" --version 2>&1 | head -n1 || true)"; \
 		if ./scripts/version-matches-pin.sh "$$sf_ver" "$(SFETCH_VERSION)"; then \
 			need_sfetch=0; \
 			echo "[ok] sfetch $(SFETCH_VERSION) already in $(BIN_DIR)"; \
@@ -119,17 +127,19 @@ bootstrap: ## Install development tools via trust chain
 		fi; \
 	fi; \
 	if [ "$$need_sfetch" -eq 1 ]; then \
-		echo "[..] Installing sfetch $(SFETCH_VERSION) (trust anchor)..."; \
-		curl -fsSL https://github.com/3leaps/sfetch/releases/download/$(SFETCH_VERSION)/install-sfetch.sh | bash -s -- \
-			--dir "$(BIN_DIR)" --tag "$(SFETCH_VERSION)" --require-minisign; \
+		echo "[..] Installing sfetch $(SFETCH_VERSION) (verified engine @ $(SFETCH_ENGINE_SHA))..."; \
+		SFETCH_VERSION="$(SFETCH_VERSION)" \
+			SFETCH_ENGINE_SHA="$(SFETCH_ENGINE_SHA)" \
+			SFETCH_ENGINE_SHA256="$(SFETCH_ENGINE_SHA256)" \
+			INSTALL_DIR="$(BIN_DIR)" \
+			./scripts/install-sfetch-verified.sh; \
 	fi
 	@if [ ! -x "$(SFETCH_LOCAL)" ]; then echo "[!!] sfetch installation failed (expected $(SFETCH_LOCAL))"; exit 1; fi
 	@echo "[ok] sfetch: $$("$(SFETCH_LOCAL)" --version 2>&1 | head -n1) ($(SFETCH_LOCAL))"
 	@echo ""
-	@# Step 2: Install goneat at declared pin into BIN_DIR via sfetch
 	@need_goneat=1; \
 	if [ -x "$(GONEAT_LOCAL)" ]; then \
-		gn_ver="$$("$(GONEAT_LOCAL)" version 2>/dev/null | head -n1 || true)"; \
+		gn_ver="$$("$(GONEAT_LOCAL)" version 2>&1 | head -n1 || true)"; \
 		if ./scripts/version-matches-pin.sh "$$gn_ver" "$(GONEAT_VERSION)"; then \
 			need_goneat=0; \
 			echo "[ok] goneat $(GONEAT_VERSION) already in $(BIN_DIR)"; \
@@ -146,8 +156,6 @@ bootstrap: ## Install development tools via trust chain
 	@if [ ! -x "$(GONEAT_LOCAL)" ]; then echo "[!!] goneat installation failed (expected $(GONEAT_LOCAL))"; exit 1; fi
 	@echo "[ok] goneat: $$("$(GONEAT_LOCAL)" version 2>&1 | head -n1)"
 	@echo ""
-	@# Step 3: Install foundation tools via goneat (best-effort locally).
-	@# Gate tools in tools.yaml must be version-pinned (no @latest).
 	@echo "[..] Installing foundation tools via goneat..."
 	@"$(GONEAT_LOCAL)" doctor tools --scope foundation --install --yes 2>/dev/null || \
 		echo "[!!] goneat doctor tools failed, some tools may need manual installation"
@@ -218,7 +226,7 @@ govulncheck: ## Run pinned govulncheck vulnerability scan
 precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	@echo "[ok] Pre-commit checks passed"
 
-prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match ## Local pre-push checks
+prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match assert-no-pipe-install-sfetch ## Local pre-push checks
 	@echo "[ok] Pre-push checks passed"
 
 assess: ## Run goneat assess (format, lint, security)
@@ -477,17 +485,29 @@ version-major: ## Bump major version
 	echo "[ok] Version bumped: $$current -> $$newver"
 
 # -----------------------------------------------------------------------------
-# Dogfood Target (future)
+# Dogfood / hygiene assertions
 # -----------------------------------------------------------------------------
-# Once shellsentry is functional, this target validates the sfetch install script
-# using shellsentry itself - completing the trust chain.
+# Authenticity (signatures) is handled by verified bootstrap / sfetch --require-minisign.
+# Dogfood is complementary: behavior analysis of the install script after fetch.
 
-dogfood: build ## Validate sfetch install script with shellsentry
-	@echo "Validating sfetch install script with shellsentry..."
+assert-no-pipe-install-sfetch: ## Fail if install-sfetch.sh is still piped to bash/sh
+	@./scripts/assert-no-pipe-install-sfetch.sh
+
+check-sfetch-pin-freshness: ## Soft-warn if SFETCH_VERSION is behind latest (informational only)
+	@./scripts/check-sfetch-pin-freshness.sh "$(SFETCH_VERSION)"
+
+dogfood: build ## Fetch sfetch installer via verified sfetch, analyze with shellsentry
+	@echo "Dogfood: fetch install-sfetch.sh with sfetch, analyze with shellsentry..."
 	@SFETCH_BIN=""; \
 	if [ -x "$(SFETCH_LOCAL)" ]; then SFETCH_BIN="$(SFETCH_LOCAL)"; \
 	elif command -v sfetch >/dev/null 2>&1; then SFETCH_BIN="$$(command -v sfetch)"; fi; \
-	if [ -z "$$SFETCH_BIN" ]; then echo "[!!] sfetch not found"; exit 1; fi; \
-	$$SFETCH_BIN --repo 3leaps/sfetch --tag $(SFETCH_VERSION) --asset-match "install-sfetch.sh" --output - \
-		| ./$(BUILD_ARTIFACT) --exit-on-danger; \
+	if [ -z "$$SFETCH_BIN" ]; then echo "[!!] sfetch not found (run make bootstrap)"; exit 1; fi; \
+	tmpdir="$$(mktemp -d)"; \
+	$$SFETCH_BIN --repo 3leaps/sfetch --tag $(SFETCH_VERSION) \
+		--asset-match "install-sfetch.sh" --dest-dir "$$tmpdir" \
+		--cache-dir "$$tmpdir/sfetch-cache" --require-minisign; \
+	script="$$(find "$$tmpdir" -name 'install-sfetch.sh' 2>/dev/null | head -n1)"; \
+	if [ -z "$$script" ] || [ ! -s "$$script" ]; then echo "[!!] failed to fetch install-sfetch.sh"; rm -rf "$$tmpdir"; exit 1; fi; \
+	./$(BUILD_ARTIFACT) --exit-on-danger "$$script"; \
+	rm -rf "$$tmpdir"; \
 	echo "[ok] sfetch install script passed shellsentry analysis"

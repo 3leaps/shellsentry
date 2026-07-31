@@ -13,6 +13,10 @@ env:
   GITHUB_TOKEN: ${{ github.token }}
   GH_TOKEN: ${{ github.token }}
   SFETCH_GITHUB_TOKEN: ${{ github.token }}
+  # Keep in sync with Makefile SFETCH_ACTION_SHA / SFETCH_VERSION (coupled pins).
+  SFETCH_ACTION_SHA: 0c2e7490420100b5d35a9e01f96f4aea8679663e
+  SFETCH_VERSION: v0.4.11
+  GONEAT_VERSION: v0.5.15
 
 jobs:
   test:
@@ -29,30 +33,40 @@ jobs:
         run: |
           sudo apt-get update && \
             sudo apt-get install -y --no-install-recommends \
-            yamllint shellcheck minisign
+            yamllint shellcheck
 
-      - name: Install sfetch (pinned)
-        run: |
-          set -euo pipefail
-          TAG=$(make -s print-sfetch-version)
-          test -n "$TAG"
-          curl -fsSL "https://github.com/3leaps/sfetch/releases/download/${TAG}/install-sfetch.sh" | \
-            bash -s -- --dir bin --tag "$TAG" --require-minisign
-          ./bin/sfetch --version
+      - name: Setup sfetch (verified action)
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
+        with:
+          sfetch-version: v0.4.11
+          install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch (pinned)
         run: |
           set -euo pipefail
-          ./bin/sfetch --repo fulmenhq/goneat \
-            --tag v0.5.15 \
+          export PATH="$PWD/bin:$PATH"
+          sfetch --repo fulmenhq/goneat \
+            --tag "${GONEAT_VERSION}" \
             --dest-dir bin \
             --require-minisign
-          ./bin/goneat version
+          goneat version 2>&1 | head -n1
+
+      - name: Assert no pipe-to-bash install-sfetch
+        run: make assert-no-pipe-install-sfetch
+
+      - name: sfetch pin freshness (informational soft-warn only)
+        run: make check-sfetch-pin-freshness
+        continue-on-error: true
 
       - name: Quality
         run: |
           export PATH="$PWD/bin:$PATH"
           make prepush
+
+      - name: Dogfood install-sfetch.sh with shellsentry
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          make dogfood
 
   test-linux-arm64:
     name: Linux quality (arm64)
@@ -68,29 +82,46 @@ jobs:
         run: |
           sudo apt-get update && \
             sudo apt-get install -y --no-install-recommends \
-            yamllint shellcheck minisign
+            yamllint shellcheck
 
-      - name: Install sfetch (pinned)
-        run: |
-          set -euo pipefail
-          TAG=$(make -s print-sfetch-version)
-          curl -fsSL "https://github.com/3leaps/sfetch/releases/download/${TAG}/install-sfetch.sh" | \
-            bash -s -- --dir bin --tag "$TAG" --require-minisign
-          ./bin/sfetch --version
+      - name: Setup sfetch (verified action)
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
+        with:
+          sfetch-version: v0.4.11
+          install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch (pinned)
         run: |
           set -euo pipefail
-          ./bin/sfetch --repo fulmenhq/goneat \
-            --tag v0.5.15 \
+          export PATH="$PWD/bin:$PATH"
+          sfetch --repo fulmenhq/goneat \
+            --tag "${GONEAT_VERSION}" \
             --dest-dir bin \
             --require-minisign
-          ./bin/goneat version
+          goneat version 2>&1 | head -n1
 
       - name: Test and build
         run: |
           export PATH="$PWD/bin:$PATH"
           make test build
+
+  macos-bootstrap-smoke:
+    name: macOS bootstrap smoke (Makefile path)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.5'
+
+      - name: Verified make bootstrap (engine digest path)
+        run: |
+          set -euo pipefail
+          make bootstrap
+          bin/sfetch --version 2>&1 | tee /tmp/sf.txt
+          grep -E '0\.4\.11' /tmp/sf.txt
+          bin/goneat version 2>&1 | head -n1
 
   windows-dogfood-x64:
     name: Windows dogfood (x64)
@@ -102,31 +133,26 @@ jobs:
         with:
           go-version: '1.26.5'
 
-      - name: Install minisign
-        shell: pwsh
-        run: |
-          choco install minisign -y --no-progress
-
-      - name: Install sfetch (pinned)
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG=$(make -s print-sfetch-version)
-          curl -fsSL "https://github.com/3leaps/sfetch/releases/download/${TAG}/install-sfetch.sh" | \
-            bash -s -- --dir bin --tag "$TAG" --require-minisign
-          ./bin/sfetch.exe --version || ./bin/sfetch --version
+      # No choco/winget minisign — setup-sfetch acquires pinned minisign 0.12.
+      - name: Setup sfetch (verified action)
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
+        with:
+          sfetch-version: v0.4.11
+          install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch
         shell: bash
         run: |
           set -euo pipefail
-          SFETCH_BIN=./bin/sfetch
+          export PATH="$PWD/bin:$PATH"
+          SFETCH_BIN=sfetch
           if [ -x ./bin/sfetch.exe ]; then SFETCH_BIN=./bin/sfetch.exe; fi
+          if [ -x ./bin/sfetch ]; then SFETCH_BIN=./bin/sfetch; fi
           "$SFETCH_BIN" --repo fulmenhq/goneat \
-            --tag v0.5.15 \
+            --tag "${GONEAT_VERSION}" \
             --dest-dir bin \
             --require-minisign
-          if [ -x ./bin/goneat.exe ]; then ./bin/goneat.exe version; else ./bin/goneat version; fi
+          if [ -x ./bin/goneat.exe ]; then ./bin/goneat.exe version; else goneat version; fi
 
       - name: Test and build
         shell: bash
@@ -145,24 +171,11 @@ jobs:
         with:
           go-version: '1.26.5'
 
-      - name: Install minisign
-        shell: pwsh
-        run: |
-          if (Get-Command choco -ErrorAction SilentlyContinue) {
-            choco install minisign -y --no-progress
-          } else {
-            winget install -e --id FrankDenis.Minisign --silent `
-              --accept-source-agreements --accept-package-agreements
-          }
-
-      - name: Install sfetch (pinned)
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG=$(make -s print-sfetch-version)
-          curl -fsSL "https://github.com/3leaps/sfetch/releases/download/${TAG}/install-sfetch.sh" | \
-            bash -s -- --dir bin --tag "$TAG" --require-minisign
-          ./bin/sfetch.exe --version || ./bin/sfetch --version
+      - name: Setup sfetch (verified action)
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
+        with:
+          sfetch-version: v0.4.11
+          install-dir: ${{ github.workspace }}/bin
 
       - name: Verify install script detects windows arm64
         shell: bash
@@ -179,13 +192,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SFETCH_BIN=./bin/sfetch
+          export PATH="$PWD/bin:$PATH"
+          SFETCH_BIN=sfetch
           if [ -x ./bin/sfetch.exe ]; then SFETCH_BIN=./bin/sfetch.exe; fi
+          if [ -x ./bin/sfetch ]; then SFETCH_BIN=./bin/sfetch; fi
           "$SFETCH_BIN" --repo fulmenhq/goneat \
-            --tag v0.5.15 \
+            --tag "${GONEAT_VERSION}" \
             --dest-dir bin \
             --require-minisign
-          if [ -x ./bin/goneat.exe ]; then ./bin/goneat.exe version; else ./bin/goneat version; fi
+          if [ -x ./bin/goneat.exe ]; then ./bin/goneat.exe version; else goneat version; fi
 
       - name: Test and build
         shell: bash
