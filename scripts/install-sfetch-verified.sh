@@ -108,14 +108,9 @@ echo "[..] fetching sfetch engine @ ${SFETCH_ENGINE_SHA}" >&2
 curl -fsSL --retry 3 --retry-delay 1 -o "$ENGINE" "$URL"
 chmod 0755 "$ENGINE"
 
-if command -v shasum >/dev/null 2>&1; then
-    GOT="$(shasum -a 256 "$ENGINE" | awk '{print $1}')"
-elif command -v sha256sum >/dev/null 2>&1; then
-    GOT="$(sha256sum "$ENGINE" | awk '{print $1}')"
-else
-    echo "error: shasum or sha256sum required" >&2
-    exit 1
-fi
+# Portable digest (sha256sum | shasum | openssl) — Git Bash lacks shasum.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+GOT="$("${SCRIPT_DIR}/sha256-file.sh" "$ENGINE")"
 if [ "$GOT" != "$SFETCH_ENGINE_SHA256" ]; then
     echo "error: engine SHA-256 mismatch" >&2
     echo "  expected: $SFETCH_ENGINE_SHA256" >&2

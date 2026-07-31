@@ -29,14 +29,24 @@ jobs:
         with:
           go-version: '1.26.5'
 
+      # No minisign here — verified bootstrap must not see ambient verifier.
       - name: Install system tools
         run: |
           sudo apt-get update && \
             sudo apt-get install -y --no-install-recommends \
-            yamllint shellcheck minisign
+            yamllint shellcheck
 
-      # Clean-runner premise: sfetch/goneat land only under workspace/bin via verified install.
-      # System minisign is for consumer negative-control harness only (not the sfetch TCB).
+      - name: Preflight no ambient sfetch/goneat/minisign
+        run: |
+          set -euo pipefail
+          for t in sfetch goneat minisign; do
+            if command -v "$t" >/dev/null 2>&1; then
+              echo "error: ambient $t present before verified bootstrap: $(command -v "$t")" >&2
+              exit 1
+            fi
+          done
+          echo "[ok] clean-runner preflight: no ambient sfetch/goneat/minisign"
+
       - name: Setup sfetch (verified action)
         uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
         with:
@@ -61,6 +71,15 @@ jobs:
         run: |
           make assert-sfetch-pin-coupling
           make assert-no-pipe-install-sfetch
+
+      # Harness-only verifier: after bootstrap + pin asserts, never before.
+      - name: Acquire minisign for negative harness only
+        run: |
+          set -euo pipefail
+          ./scripts/acquire-minisign-for-harness.sh "$PWD/bin"
+          export PATH="$PWD/bin:$PATH"
+          command -v minisign
+          minisign -v 2>&1 | head -n1
 
       - name: Consumer bootstrap negative controls
         run: |
@@ -97,6 +116,16 @@ jobs:
             sudo apt-get install -y --no-install-recommends \
             yamllint shellcheck
 
+      - name: Preflight no ambient sfetch/goneat/minisign
+        run: |
+          set -euo pipefail
+          for t in sfetch goneat minisign; do
+            if command -v "$t" >/dev/null 2>&1; then
+              echo "error: ambient $t present before verified bootstrap: $(command -v "$t")" >&2
+              exit 1
+            fi
+          done
+
       - name: Setup sfetch (verified action)
         uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
         with:
@@ -132,6 +161,16 @@ jobs:
         with:
           go-version: '1.26.5'
 
+      - name: Preflight no ambient sfetch/goneat when possible
+        run: |
+          set -euo pipefail
+          # macOS images may ship nothing; if present, note (Makefile path still digest-pins engine)
+          for t in sfetch goneat; do
+            if command -v "$t" >/dev/null 2>&1; then
+              echo "note: ambient $t at $(command -v "$t") (Makefile bootstrap still uses digest-pinned engine)"
+            fi
+          done
+
       - name: Verified make bootstrap (engine digest path)
         run: |
           set -euo pipefail
@@ -139,11 +178,13 @@ jobs:
           export PATH="$PWD/bin:$PATH"
           make assert-tool-pins
 
-      - name: Consumer negative controls (macOS)
+      - name: Acquire minisign for negative harness only
         run: |
+          set -euo pipefail
+          if ! command -v minisign >/dev/null 2>&1; then
+            ./scripts/acquire-minisign-for-harness.sh "$PWD/bin"
+          fi
           export PATH="$PWD/bin:$PATH"
-          # minisign for harness: brew or engine-provided path not required if acquired in bootstrap tools
-          command -v minisign >/dev/null 2>&1 || brew install minisign
           make test-bootstrap-negative-controls
 
   windows-dogfood-x64:
@@ -156,7 +197,17 @@ jobs:
         with:
           go-version: '1.26.5'
 
-      # No choco/winget minisign — setup-sfetch acquires pinned minisign 0.12 for install.
+      - name: Preflight no ambient sfetch/goneat/minisign
+        shell: bash
+        run: |
+          set -euo pipefail
+          for t in sfetch goneat minisign; do
+            if command -v "$t" >/dev/null 2>&1; then
+              echo "error: ambient $t present before verified bootstrap: $(command -v "$t")" >&2
+              exit 1
+            fi
+          done
+
       - name: Setup sfetch (verified action)
         uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
         with:
@@ -182,19 +233,12 @@ jobs:
           export PATH="$PWD/bin:$PATH"
           make assert-tool-pins
 
-      - name: Consumer negative controls (Windows)
+      - name: Acquire minisign for negative harness only
         shell: bash
         run: |
           set -euo pipefail
+          ./scripts/acquire-minisign-for-harness.sh "$PWD/bin"
           export PATH="$PWD/bin:$PATH"
-          # Acquire pinned minisign for harness via sfetch engine helper if needed
-          if ! command -v minisign >/dev/null 2>&1; then
-            curl -fsSL -o /tmp/boot-engine.sh \
-              "https://raw.githubusercontent.com/3leaps/sfetch/0c2e7490420100b5d35a9e01f96f4aea8679663e/scripts/bootstrap-sfetch-verified.sh"
-            echo "b45f0b0eb0e94728253de4dfb4306a3965e7266103a22c7cfdf1a6de62308b9a  /tmp/boot-engine.sh" | shasum -a 256 -c
-            bash /tmp/boot-engine.sh --acquire-minisign-only --dir "$PWD/bin"
-            export PATH="$PWD/bin:$PATH"
-          fi
           make test-bootstrap-negative-controls
 
       - name: Test and build
@@ -213,6 +257,17 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: '1.26.5'
+
+      - name: Preflight no ambient sfetch/goneat/minisign
+        shell: bash
+        run: |
+          set -euo pipefail
+          for t in sfetch goneat minisign; do
+            if command -v "$t" >/dev/null 2>&1; then
+              echo "error: ambient $t present before verified bootstrap: $(command -v "$t")" >&2
+              exit 1
+            fi
+          done
 
       - name: Setup sfetch (verified action)
         uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
@@ -250,18 +305,12 @@ jobs:
           export PATH="$PWD/bin:$PATH"
           make assert-tool-pins
 
-      - name: Consumer negative controls (Windows arm64)
+      - name: Acquire minisign for negative harness only
         shell: bash
         run: |
           set -euo pipefail
+          ./scripts/acquire-minisign-for-harness.sh "$PWD/bin"
           export PATH="$PWD/bin:$PATH"
-          if ! command -v minisign >/dev/null 2>&1; then
-            curl -fsSL -o /tmp/boot-engine.sh \
-              "https://raw.githubusercontent.com/3leaps/sfetch/0c2e7490420100b5d35a9e01f96f4aea8679663e/scripts/bootstrap-sfetch-verified.sh"
-            echo "b45f0b0eb0e94728253de4dfb4306a3965e7266103a22c7cfdf1a6de62308b9a  /tmp/boot-engine.sh" | shasum -a 256 -c
-            bash /tmp/boot-engine.sh --acquire-minisign-only --dir "$PWD/bin"
-            export PATH="$PWD/bin:$PATH"
-          fi
           make test-bootstrap-negative-controls
 
       - name: Test and build
