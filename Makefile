@@ -76,6 +76,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-clean bootstrap-script verify-release-key
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match
 .PHONY: dogfood assert-no-pipe-install-sfetch check-sfetch-pin-freshness
+.PHONY: assert-sfetch-pin-coupling assert-tool-pins test-bootstrap-negative-controls
 
 all: build
 
@@ -226,7 +227,7 @@ govulncheck: ## Run pinned govulncheck vulnerability scan
 precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	@echo "[ok] Pre-commit checks passed"
 
-prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match assert-no-pipe-install-sfetch ## Local pre-push checks
+prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
 	@echo "[ok] Pre-push checks passed"
 
 assess: ## Run goneat assess (format, lint, security)
@@ -492,6 +493,15 @@ version-major: ## Bump major version
 
 assert-no-pipe-install-sfetch: ## Fail if install-sfetch.sh is still piped to bash/sh
 	@./scripts/assert-no-pipe-install-sfetch.sh
+
+assert-sfetch-pin-coupling: ## Fail if CI action SHA/version drift from Makefile pins
+	@./scripts/assert-sfetch-pin-coupling.sh
+
+assert-tool-pins: ## Exact sfetch/goneat pin check (stderr-aware)
+	@./scripts/assert-tool-pins.sh "$(SFETCH_VERSION)" "$(GONEAT_VERSION)"
+
+test-bootstrap-negative-controls: ## Consumer negative controls (digest/tamper/anchor/freshness/dogfood)
+	@./scripts/test-bootstrap-negative-controls.sh
 
 check-sfetch-pin-freshness: ## Soft-warn if SFETCH_VERSION is behind latest (informational only)
 	@./scripts/check-sfetch-pin-freshness.sh "$(SFETCH_VERSION)"

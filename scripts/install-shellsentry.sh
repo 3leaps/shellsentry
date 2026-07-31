@@ -634,8 +634,8 @@ main() {
     echo ""
     log "Done! Run 'shellsentry --help' to get started."
     echo ""
-    echo "Tip: For secure installs of other tools, use sfetch:"
-    echo "  curl -sSfL https://github.com/3leaps/sfetch/releases/latest/download/install-sfetch.sh | bash"
+    echo "Tip: For secure installs of other tools, use sfetch with a pinned tag"
+    echo "  (see https://github.com/3leaps/sfetch — verified bootstrap / setup-sfetch action)."
 }
 
 main "$@"
