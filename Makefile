@@ -48,6 +48,8 @@ SFETCH_ENGINE_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
 SFETCH_ENGINE_SHA256 := b45f0b0eb0e94728253de4dfb4306a3965e7266103a22c7cfdf1a6de62308b9a
 # Composite action pin (same commit as engine for this train).
 SFETCH_ACTION_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
+# Engine source repo (flag-owned; no ambient env seam).
+SFETCH_ENGINE_REPO := 3leaps/sfetch
 # Embedded consumer trust anchor (do not fetch sfetch-minisign.pub from releases).
 SFETCH_MINISIGN_PUBKEY := RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC
 GONEAT_VERSION ?= v0.5.15
@@ -129,11 +131,12 @@ bootstrap: ## Install development tools via verified trust chain
 	fi; \
 	if [ "$$need_sfetch" -eq 1 ]; then \
 		echo "[..] Installing sfetch $(SFETCH_VERSION) (verified engine @ $(SFETCH_ENGINE_SHA))..."; \
-		SFETCH_VERSION="$(SFETCH_VERSION)" \
-			SFETCH_ENGINE_SHA="$(SFETCH_ENGINE_SHA)" \
-			SFETCH_ENGINE_SHA256="$(SFETCH_ENGINE_SHA256)" \
-			INSTALL_DIR="$(BIN_DIR)" \
-			./scripts/install-sfetch-verified.sh; \
+		./scripts/install-sfetch-verified.sh \
+			--version "$(SFETCH_VERSION)" \
+			--dir "$(BIN_DIR)" \
+			--engine-sha "$(SFETCH_ENGINE_SHA)" \
+			--engine-sha256 "$(SFETCH_ENGINE_SHA256)" \
+			--repo "$(SFETCH_ENGINE_REPO)"; \
 	fi
 	@if [ ! -x "$(SFETCH_LOCAL)" ]; then echo "[!!] sfetch installation failed (expected $(SFETCH_LOCAL))"; exit 1; fi
 	@echo "[ok] sfetch: $$("$(SFETCH_LOCAL)" --version 2>&1 | head -n1) ($(SFETCH_LOCAL))"

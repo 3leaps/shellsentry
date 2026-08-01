@@ -16,15 +16,17 @@ SFETCH_ENGINE_SHA="${SFETCH_ENGINE_SHA:-}"
 SFETCH_ENGINE_SHA256="${SFETCH_ENGINE_SHA256:-}"
 INSTALL_DIR="${INSTALL_DIR:-}"
 GONEAT_VERSION="${GONEAT_VERSION:-}"
-REPO_SLUG="${SFETCH_ENGINE_REPO:-3leaps/sfetch}"
+# Repo is flag-owned (Makefile pin). No ambient env override for trust path.
+REPO_SLUG="3leaps/sfetch"
 
 usage() {
     cat <<'EOF' >&2
 Usage: install-sfetch-verified.sh --version vX.Y.Z --dir PATH \
-  --engine-sha <git-sha> --engine-sha256 <hex> [--goneat-version vX.Y.Z]
+  --engine-sha <git-sha> --engine-sha256 <hex> \
+  [--repo owner/name] [--goneat-version vX.Y.Z]
 
 Env equivalents: SFETCH_VERSION, INSTALL_DIR, SFETCH_ENGINE_SHA,
-SFETCH_ENGINE_SHA256, GONEAT_VERSION.
+SFETCH_ENGINE_SHA256, GONEAT_VERSION (not SFETCH_ENGINE_REPO — use --repo).
 EOF
     exit 2
 }
@@ -45,6 +47,10 @@ while [ $# -gt 0 ]; do
             ;;
         --engine-sha256)
             SFETCH_ENGINE_SHA256="$2"
+            shift 2
+            ;;
+        --repo)
+            REPO_SLUG="$2"
             shift 2
             ;;
         --goneat-version)
