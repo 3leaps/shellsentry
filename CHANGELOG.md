@@ -7,6 +7,21 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-07-31
+
+### Added
+
+- Verified sfetch bootstrap via `3leaps/sfetch` setup-sfetch action (CI) and digest-pinned `scripts/install-sfetch-verified.sh` (Makefile).
+- Fail-closed assert against pipe-to-bash for `install-sfetch.sh` (`make assert-no-pipe-install-sfetch`).
+- Soft-only sfetch pin freshness probe (`make check-sfetch-pin-freshness`); authenticity remains fail-closed.
+- macOS Makefile bootstrap smoke job; dogfood job analyzes install-sfetch.sh after verified fetch.
+
+### Changed
+
+- Bootstrap pin **sfetch v0.4.11** (minisig installer path); goneat remains v0.5.15 with `--require-minisign`.
+- Removed Chocolatey/winget minisign installs from Windows CI (pinned minisign 0.12 via setup-sfetch).
+- Activated `make dogfood` in Linux CI quality job.
+
 ## [0.1.5] - 2026-07-30
 
 ### Added
