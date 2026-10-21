@@ -16,7 +16,7 @@ env:
   # Keep in sync with Makefile SFETCH_ACTION_SHA / SFETCH_VERSION (assert-sfetch-pin-coupling).
   SFETCH_ACTION_SHA: 0c2e7490420100b5d35a9e01f96f4aea8679663e
   SFETCH_VERSION: v0.4.11
-  GONEAT_VERSION: v0.5.15
+  GONEAT_VERSION: v0.6.6
 
 jobs:
   test:

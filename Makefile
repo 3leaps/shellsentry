@@ -52,7 +52,7 @@ SFETCH_ACTION_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
 SFETCH_ENGINE_REPO := 3leaps/sfetch
 # Embedded consumer trust anchor (do not fetch sfetch-minisign.pub from releases).
 SFETCH_MINISIGN_PUBKEY := RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC
-GONEAT_VERSION ?= v0.5.15
+GONEAT_VERSION ?= v0.6.6
 GOVULNCHECK_VERSION ?= v1.6.0
 STATICCHECK_VERSION ?= v0.6.1
 
