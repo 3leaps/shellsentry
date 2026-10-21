@@ -24,11 +24,12 @@
 # -----------------------------------------------------------------------------
 # This script is distributed as a release asset and can be verified:
 #   1. Download SHA256SUMS and SHA256SUMS.minisig from the same release
-#   2. minisign -Vm SHA256SUMS -P RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC
+#   2. minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
+#      (tags <= v0.1.6 verify under the previous key: RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC)
 #   3. grep install-shellsentry.sh SHA256SUMS | sha256sum -c
 #
 # Repository: https://github.com/3leaps/shellsentry
-# Trust anchor: RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC
+# Trust anchor: RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
 #
 
 set -euo pipefail
@@ -41,10 +42,17 @@ SHELLSENTRY_REPO="3leaps/shellsentry"
 SHELLSENTRY_API="https://api.github.com/repos/${SHELLSENTRY_REPO}/releases"
 
 # Embedded trust anchor - minisign public key for verifying releases
-# Update this before release if keys rotate.
-SHELLSENTRY_MINISIGN_PUBKEY="${SHELLSENTRY_MINISIGN_PUBKEY:-RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC}"
+# Must match configs/keys/shellsentry-minisign.pub (embedded in the binary).
+SHELLSENTRY_MINISIGN_PUBKEY="${SHELLSENTRY_MINISIGN_PUBKEY:-RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1}"
 # Pinned PGP fingerprint (for optional fallback)
-SHELLSENTRY_PGP_FPR="${SHELLSENTRY_PGP_FPR:-94BB7811D4AD49B2310E0C08FA0651DE91B828ED}"
+SHELLSENTRY_PGP_FPR="${SHELLSENTRY_PGP_FPR:-0CACA49B3119B6BC12B2CA11B9B485F294B9FE07}"
+# Previous-key anchors, pin-scoped ONLY. SHELLSENTRY_PREVKEY_MAX is the last tag
+# signed with the previous org keys (historical fact, never advance it): tags at
+# or below it verify against the LEGACY anchors; tags above verify against the
+# current ones. Never try both generations for one tag.
+SHELLSENTRY_PREVKEY_MAX="v0.1.6"
+SHELLSENTRY_MINISIGN_PUBKEY_LEGACY="RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC"
+SHELLSENTRY_PGP_FPR_LEGACY="94BB7811D4AD49B2310E0C08FA0651DE91B828ED"
 TRUST_LEVEL="unknown"
 
 # -----------------------------------------------------------------------------
@@ -62,6 +70,31 @@ need_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
         err "required command not found: $1"
     fi
+}
+
+is_exact_semver_tag() {
+    [[ "$1" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+}
+
+# semver_le_tag: true if tag a <= tag b (exact vX.Y.Z inputs, no leading zeros).
+# Length-then-lexical per component under C locale: no machine arithmetic, so no
+# wraparound on huge components.
+semver_le_tag() {
+    local LC_ALL=C
+    local a="${1#v}" b="${2#v}"
+    local a1 a2 a3 b1 b2 b3
+    IFS=. read -r a1 a2 a3 <<<"$a"
+    IFS=. read -r b1 b2 b3 <<<"$b"
+    local x y
+    for pair in "$a1:$b1" "$a2:$b2" "$a3:$b3"; do
+        x="${pair%%:*}"
+        y="${pair##*:}"
+        if [ "${#x}" -lt "${#y}" ]; then return 0; fi
+        if [ "${#x}" -gt "${#y}" ]; then return 1; fi
+        if [[ "$x" < "$y" ]]; then return 0; fi
+        if [[ "$x" > "$y" ]]; then return 1; fi
+    done
+    return 0
 }
 
 read_release_tag_name() {
@@ -310,7 +343,7 @@ verify_signature() {
     if [ "$VERIFY_MINISIGN" = true ] && [ -f "${sums_file}.minisig" ]; then
         local pubkey_file="${tmpdir}/shellsentry-minisign.pub"
         echo "untrusted comment: shellsentry release signing key" >"$pubkey_file"
-        echo "$SHELLSENTRY_MINISIGN_PUBKEY" >>"$pubkey_file"
+        echo "$ACTIVE_MINISIGN_PUBKEY" >>"$pubkey_file"
 
         log "Verifying signature with minisign (embedded trust anchor)..."
         if minisign -Vm "$sums_file" -p "$pubkey_file" >/dev/null 2>&1; then
@@ -337,8 +370,8 @@ verify_signature() {
         if [ -f "$gpg_key" ]; then
             local fpr
             fpr=$(gpg --with-colons --import-options show-only --fingerprint "$gpg_key" 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}')
-            if [ "$fpr" != "$SHELLSENTRY_PGP_FPR" ]; then
-                err "GPG key fingerprint mismatch (expected ${SHELLSENTRY_PGP_FPR}, got ${fpr:-unknown})"
+            if [ "$fpr" != "$ACTIVE_PGP_FPR" ]; then
+                err "GPG key fingerprint mismatch (expected ${ACTIVE_PGP_FPR}, got ${fpr:-unknown})"
             fi
             log "Verifying signature with gpg (pinned fingerprint)..."
             local gpg_home
@@ -517,6 +550,22 @@ main() {
     local version
     version=$(read_release_tag_name "$release_json")
     log "Installing shellsentry ${version}"
+
+    # Pin map: the resolved tag selects exactly one key generation. Tags at or
+    # below SHELLSENTRY_PREVKEY_MAX are previous-key-signed; tags above are
+    # current-key-signed. Refuse non-semver tags rather than guess a key.
+    if ! is_exact_semver_tag "$version"; then
+        err "cannot select trust anchor for non-semver tag: ${version:-<empty>}"
+    fi
+    ACTIVE_MINISIGN_PUBKEY="$SHELLSENTRY_MINISIGN_PUBKEY"
+    ACTIVE_PGP_FPR="$SHELLSENTRY_PGP_FPR"
+    local anchor_gen="current"
+    if semver_le_tag "$version" "$SHELLSENTRY_PREVKEY_MAX"; then
+        anchor_gen="legacy"
+        ACTIVE_MINISIGN_PUBKEY="$SHELLSENTRY_MINISIGN_PUBKEY_LEGACY"
+        ACTIVE_PGP_FPR="$SHELLSENTRY_PGP_FPR_LEGACY"
+    fi
+    log "trust anchor: ${anchor_gen} (pin ${version})"
 
     # Determine archive name
     local archive_name="shellsentry_${platform}"

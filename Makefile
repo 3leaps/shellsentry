@@ -76,7 +76,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
 .PHONY: release-clean bootstrap-script verify-release-key
-.PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match
+.PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
 .PHONY: dogfood assert-no-pipe-install-sfetch check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-bootstrap-negative-controls
 
@@ -230,7 +230,7 @@ govulncheck: ## Run pinned govulncheck vulnerability scan
 precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	@echo "[ok] Pre-commit checks passed"
 
-prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
+prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
 	@echo "[ok] Pre-push checks passed"
 
 assess: ## Run goneat assess (format, lint, security)
@@ -321,6 +321,9 @@ test-release-verify-checksums: ## Regression: fail-closed checksum verify (corru
 # Current-pin vs stale-pin coverage for bootstrap version matching (fixed-string).
 test-bootstrap-pin-match: ## Regression: version-matches-pin current + stale cases
 	@./scripts/test-bootstrap-pin-match.sh
+
+test-install-anchor-select: ## Regression: installer pin-map anchor selection (unit + coherence)
+	@./scripts/test-install-anchor-select.sh
 
 release-notes: ## Copy release notes into dist/release
 	@if [ -z "$(RELEASE_TAG)" ]; then echo "error: RELEASE_TAG not set" >&2; exit 1; fi

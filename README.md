@@ -159,6 +159,12 @@ Additional flags:
 - `--self-update-force` -- Allow major version jumps or update dev builds
 - `--self-update-dir DIR` -- Install to custom directory
 
+Release signing keys rotated at v0.1.7. Binaries through v0.1.6 embed the
+previous key, so their self-update rejects v0.1.7 and later; reinstall once
+with `install-shellsentry.sh` (or sfetch), then self-update works again. The
+installer selects the key by tag: v0.1.6 and earlier verify under the previous
+key, later tags under the current key.
+
 ## Build
 
 ```bash
