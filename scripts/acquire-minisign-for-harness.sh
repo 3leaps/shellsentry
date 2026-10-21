@@ -12,8 +12,8 @@ mkdir -p "$DIR"
 DIR="$(cd "$DIR" && pwd)"
 
 # Reuse sfetch engine pins from Makefile (caller should already have verified sfetch).
-ENGINE_SHA="${SFETCH_ENGINE_SHA:-0c2e7490420100b5d35a9e01f96f4aea8679663e}"
-ENGINE_SUM="${SFETCH_ENGINE_SHA256:-b45f0b0eb0e94728253de4dfb4306a3965e7266103a22c7cfdf1a6de62308b9a}"
+ENGINE_SHA="${SFETCH_ENGINE_SHA:-d0ad13eb352c18f56604c483c733d425af6e9763}"
+ENGINE_SUM="${SFETCH_ENGINE_SHA256:-ccdc7e66daacb960c0cce08bced14896b13df6f90dfa5ae43f2d54ca0f95d990}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/shs-minisign-harness.XXXXXX")"
 trap 'rm -rf "${WORK}"' EXIT

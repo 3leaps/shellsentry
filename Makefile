@@ -40,18 +40,18 @@ BIN_DIR := $(CURDIR)/bin
 
 # Pinned tool versions (bootstrap installs these into BIN_DIR; do not float)
 # SFETCH_VERSION is a published consumable release (minisig path requires >= v0.4.11).
-SFETCH_VERSION := v0.4.11
+SFETCH_VERSION := v0.4.13
 # Immutable sfetch engine pin (action/repo commit that owns bootstrap-sfetch-verified.sh).
 # Coupled with SFETCH_VERSION: advancing the product pin may require a new engine SHA
 # when SFETCH_BOOTSTRAP_MAX moves (see sfetch docs/cicd-usage-guide.md).
-SFETCH_ENGINE_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
-SFETCH_ENGINE_SHA256 := b45f0b0eb0e94728253de4dfb4306a3965e7266103a22c7cfdf1a6de62308b9a
+SFETCH_ENGINE_SHA := d0ad13eb352c18f56604c483c733d425af6e9763
+SFETCH_ENGINE_SHA256 := ccdc7e66daacb960c0cce08bced14896b13df6f90dfa5ae43f2d54ca0f95d990
 # Composite action pin (same commit as engine for this train).
-SFETCH_ACTION_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
+SFETCH_ACTION_SHA := d0ad13eb352c18f56604c483c733d425af6e9763
 # Engine source repo (flag-owned; no ambient env seam).
 SFETCH_ENGINE_REPO := 3leaps/sfetch
 # Embedded consumer trust anchor (do not fetch sfetch-minisign.pub from releases).
-SFETCH_MINISIGN_PUBKEY := RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC
+SFETCH_MINISIGN_PUBKEY := RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
 GONEAT_VERSION ?= v0.6.6
 GOVULNCHECK_VERSION ?= v1.6.0
 STATICCHECK_VERSION ?= v0.6.1
