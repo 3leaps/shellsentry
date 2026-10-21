@@ -2,6 +2,75 @@
 
 Note: Keep only the latest three releases here, in newest-to-oldest order.
 
+## v0.1.7
+
+### Highlights
+
+- Built with Go 1.26.10. Resolves standard library vulnerabilities reachable
+  from shellsentry when built with Go 1.26.5.
+- Release signing keys rotated to the current organization keys.
+- Dependency and development tooling refresh.
+
+### Security
+
+- Go 1.26.10 resolves GO-2026-5026, GO-2026-5972, GO-2026-6090,
+  GO-2026-6218, GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608,
+  GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613, GO-2026-6617, and
+  GO-2026-6809 (`net/http`, `net/url`, `net/textproto`, `crypto/tls`,
+  `crypto/x509`, `encoding/asn1`). `govulncheck` reports no called
+  vulnerabilities.
+- `golang.org/x/crypto` v0.58.0 (GO-2026-6303, GO-2026-6354, GO-2026-6355 in
+  `x/crypto/ssh`; not called by shellsentry).
+
+### Changed
+
+- `go.mod`: `go 1.26.0` with `toolchain go1.26.10`; CI and release use Go
+  1.26.10.
+- `golang.org/x/crypto` v0.58.0 and `golang.org/x/sys` v0.49.0.
+- Release signing: the embedded self-update anchor and the installer's
+  minisign and GPG pins move to the current organization keys. The installer
+  selects one key generation per tag: v0.1.6 and earlier verify under the
+  previous keys, v0.1.7 and later under the current keys, with no fallback.
+- Verified bootstrap: sfetch v0.4.13 (engine and action commit, engine
+  SHA-256, and consumer trust anchor) and goneat v0.6.6; golangci-lint pinned
+  to v2.14.0 (was unpinned).
+
+### Fixed
+
+- `install-shellsentry.sh` GPG route reads the release key file's fingerprint
+  correctly; it previously failed closed with a fingerprint mismatch. The key
+  file must contain exactly one primary key equal to the pinned fingerprint,
+  and the signature must come from that key. Key files with secret-key
+  packets are refused.
+
+### Upgrading
+
+Self-update in v0.1.6 and earlier embeds the previous key and rejects v0.1.7.
+Reinstall once with `install-shellsentry.sh` or sfetch:
+
+```bash
+curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.7/install-shellsentry.sh | bash -s -- --tag v0.1.7
+```
+
+Self-update works again from v0.1.7 onward.
+
+---
+
+## v0.1.6
+
+### Highlights
+
+- CI installs sfetch via the `3leaps/sfetch` `setup-sfetch` action (SHA-pinned); no pipe-to-bash.
+- Makefile bootstrap uses the digest-pinned `bootstrap-sfetch-verified` engine.
+- Windows CI drops choco/winget minisign (pinned 0.12 via setup-sfetch).
+- Soft-only pin freshness probe; fail-closed pipe-to-bash assert; dogfood and macOS bootstrap smoke.
+
+### Pins
+
+- sfetch v0.4.11, goneat v0.5.15.
+
+---
+
 ## v0.1.5
 
 ### Highlights
@@ -39,57 +108,3 @@ curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.4/instal
 | Linux   | amd64, arm64    |
 | macOS   | arm64           |
 | Windows | amd64, arm64    |
-
----
-
-## v0.1.4
-
-### Highlights
-
-- Release verification aligned to sfetch pattern with composite `make release-verify` gate.
-- Checksum manifest naming aligned to `SHA512SUMS` (convention match with sfetch and `sha512sum`).
-- Windows ARM64 install script fix: correct binary now downloaded on ARM64 hardware.
-
-### Added
-
-- `release-verify` composite target runs checksums, signatures, and key verification in one step.
-- `release-verify-signatures` + `scripts/verify-signatures.sh` for automated signature validation.
-- `release-verify-keys` validates both PGP and minisign public keys.
-- `release-export-keys` exports both key types in one command.
-- `release-verify-minisign-pubkey` validates exported key matches embedded trust anchor.
-
-### Changed
-
-- Renamed `SHA2-512SUMS` -> `SHA512SUMS` across Go source, scripts, and Makefile. Self-update falls back to SHA256SUMS for older releases.
-- RELEASE_CHECKLIST.md reordered: verify checksums before signing, verify signatures after.
-
-### Fixed
-
-- Windows ARM64 platform detection: `detect_windows_arch()` with three-tier fallback (RUNNER_ARCH, PowerShell OSArchitecture, PROCESSOR_ARCHITEW6432) prevents WoW64 emulation from selecting wrong binary.
-- `release-verify-minisign-pubkey` grep pattern for pretty-printed JSON output.
-- `build-all` and `package-all` now include `windows/arm64` (aligned with CI matrix).
-
----
-
-## v0.1.3
-
-### Highlights
-
-- Security dependency sweep: all known stdlib and x/crypto CVEs resolved.
-- Go toolchain bumped to 1.26.1; shell parser (mvdan.cc/sh) updated to v3.13.0.
-- Goneat dependency protection added with vulnerability gating at `high` severity.
-- Agentic attribution hardened against email squatting with full provenance chain format.
-
-### Changed
-
-- Go toolchain: 1.25.1 -> 1.26.1 (resolves 1 critical, 10 high, 11 medium stdlib CVEs).
-- mvdan.cc/sh/v3: 3.12.0 -> 3.13.0 (shell parser, direct dependency).
-- golang.org/x/crypto: 0.31.0 -> 0.48.0 (resolves 3 advisories).
-- golang.org/x/sys: 0.33.0 -> 0.42.0.
-- github.com/spf13/pflag: 1.0.9 -> 1.0.10.
-- Pinned tool minimums: sfetch v0.4.5, goneat v0.5.7.
-
-### Security
-
-- Zero vulnerability findings after upgrades (was 1 critical, 10 high, 11 medium).
-- Vulnerability gating enforced at `high` severity via goneat dependency protection.
