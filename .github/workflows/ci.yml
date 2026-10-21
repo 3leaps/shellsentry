@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       # No minisign here — verified bootstrap must not see ambient verifier.
       - name: Install system tools
@@ -108,7 +108,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       - name: Install system tools
         run: |
@@ -159,7 +159,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       - name: Preflight no ambient sfetch/goneat when possible
         run: |
@@ -195,7 +195,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       - name: Preflight no ambient sfetch/goneat/minisign
         shell: bash
@@ -256,7 +256,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       - name: Preflight no ambient sfetch/goneat/minisign
         shell: bash
