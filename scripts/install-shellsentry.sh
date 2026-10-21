@@ -388,21 +388,41 @@ verify_signature() {
     if [ "$verified" = false ] && [ "$REQUIRE_MINISIGN" = false ] && [ "$VERIFY_GPG" = true ] && [ -f "${sums_file}.asc" ]; then
         local gpg_key="${tmpdir}/shellsentry-release-signing-key.asc"
         if [ -f "$gpg_key" ]; then
-            local fpr
-            fpr=$(gpg --with-colons --import-options show-only --import --fingerprint "$gpg_key" 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}')
-            if [ "$fpr" != "$ACTIVE_PGP_FPR" ]; then
-                err "GPG key fingerprint mismatch (expected ${ACTIVE_PGP_FPR}, got ${fpr:-unknown})"
-            fi
-            log "Verifying signature with gpg (pinned fingerprint)..."
             local gpg_home
             gpg_home=$(mktemp -d)
+            chmod 700 "$gpg_home"
+            # The key file must hold exactly one primary key, and it must be the
+            # pinned one; a bundle could otherwise carry an extra signer. The
+            # count check gives a clear error; the equality check alone also
+            # refuses bundles, and VALIDSIG below is an independent backstop.
+            local fprs
+            fprs=$(gpg --homedir "$gpg_home" --batch --no-tty --with-colons \
+                --import-options show-only --import "$gpg_key" 2>/dev/null |
+                awk -F: '$1 == "pub" { want = 1; next } want && $1 == "fpr" { print $10; want = 0 }')
+            if [ "$(printf '%s\n' "$fprs" | grep -c .)" -ne 1 ]; then
+                rm -rf "$gpg_home"
+                err "GPG key file must contain exactly one primary key"
+            fi
+            if [ "$fprs" != "$ACTIVE_PGP_FPR" ]; then
+                rm -rf "$gpg_home"
+                err "GPG key fingerprint mismatch (expected ${ACTIVE_PGP_FPR}, got ${fprs:-unknown})"
+            fi
+            log "Verifying signature with gpg (pinned fingerprint)..."
+            # Accept only a VALIDSIG whose primary-key fingerprint is the pin.
+            local status sig_primary
             if gpg --batch --no-tty --homedir "$gpg_home" --import "$gpg_key" 2>/dev/null &&
-                gpg --batch --no-tty --homedir "$gpg_home" --trust-model always \
-                    --verify "${sums_file}.asc" "$sums_file" 2>/dev/null; then
+                status=$(gpg --batch --no-tty --homedir "$gpg_home" --trust-model always \
+                    --status-fd 1 --verify "${sums_file}.asc" "$sums_file" 2>/dev/null); then
+                sig_primary=$(printf '%s\n' "$status" | awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" { print $NF; exit }')
+                if [ "$sig_primary" != "$ACTIVE_PGP_FPR" ]; then
+                    rm -rf "$gpg_home"
+                    err "GPG signature is not from the pinned key (got ${sig_primary:-none})"
+                fi
                 log "GPG signature verified"
                 verified=true
                 TRUST_LEVEL="medium (gpg, pinned key)"
             else
+                rm -rf "$gpg_home"
                 err "GPG signature verification failed"
             fi
             rm -rf "$gpg_home"

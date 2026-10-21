@@ -46,6 +46,9 @@ minisign_key_id() {
 }
 [ "$(minisign_key_id "$SHELLSENTRY_MINISIGN_PUBKEY")" = "6DC067B6CF9F51EA" ] || fail "current minisign key id"
 [ "$(minisign_key_id "$SHELLSENTRY_MINISIGN_PUBKEY_LEGACY")" = "DE44B5D37442A1C0" ] || fail "legacy minisign key id"
+# Full key material, not just the id (an id-preserving payload change must fail).
+[ "$SHELLSENTRY_MINISIGN_PUBKEY" = "RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1" ] || fail "current minisign key material"
+[ "$SHELLSENTRY_MINISIGN_PUBKEY_LEGACY" = "RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC" ] || fail "legacy minisign key material"
 [ "$SHELLSENTRY_PGP_FPR" = "0CACA49B3119B6BC12B2CA11B9B485F294B9FE07" ] || fail "current GPG fingerprint"
 [ "$SHELLSENTRY_PGP_FPR_LEGACY" = "94BB7811D4AD49B2310E0C08FA0651DE91B828ED" ] || fail "legacy GPG fingerprint"
 pass "shipped trust constants match pinned values"
@@ -183,6 +186,57 @@ if command -v minisign >/dev/null 2>&1; then
         gpg_verify_as v0.1.7 cur || fail "v0.1.7 must verify under the current GPG pin"
         if gpg_verify_as v0.1.6 cur; then fail "v0.1.6 must reject the current GPG key"; fi
         if gpg_verify_as v0.1.7 old; then fail "v0.1.7 must reject the legacy GPG key"; fi
+        # Bundled key files: the pinned key plus any extra primary key is refused,
+        # whichever key signed and whatever order the keys appear in.
+        FPR_ATK="$(gpg_gen 'atk@test.invalid')"
+        [ -n "$FPR_ATK" ] || fail "attacker key"
+        gpg_bundle_as() {
+            local tag="$1" signer="$2" d
+            shift 2
+            d="$(mktemp -d "$WORK/b.XXXXXX")"
+            cp "$WORK/SHA256SUMS" "$d/SHA256SUMS"
+            local k
+            for k in "$@"; do
+                gpg --homedir "$GH" --batch --armor --export "${k}@test.invalid" \
+                    >>"$d/shellsentry-release-signing-key.asc"
+            done
+            gpg --homedir "$GH" --batch --yes --pinentry-mode loopback --passphrase '' \
+                -u "${signer}@test.invalid" --armor --detach-sign -o "$d/SHA256SUMS.asc" "$d/SHA256SUMS" ||
+                fail "gpg sign as $signer"
+            (
+                VERIFY_GPG=true REQUIRE_MINISIGN=false
+                select_trust_anchor "$tag"
+                verify_signature "$d/SHA256SUMS" "$d"
+            ) >/dev/null 2>&1
+        }
+        if gpg_bundle_as v0.1.7 atk cur atk; then fail "v0.1.7: appended attacker key must be refused"; fi
+        if gpg_bundle_as v0.1.7 atk atk cur; then fail "v0.1.7: prepended attacker key must be refused"; fi
+        if gpg_bundle_as v0.1.7 old cur old; then fail "v0.1.7: bundled legacy key must be refused"; fi
+        if gpg_bundle_as v0.1.6 atk old atk; then fail "v0.1.6: appended attacker key must be refused"; fi
+        if gpg_bundle_as v0.1.6 cur old cur; then fail "v0.1.6: bundled current key must be refused"; fi
+        if gpg_bundle_as v0.1.7 cur cur atk; then fail "v0.1.7: bundle refused even when the pinned key signed"; fi
+        gpg_bundle_as v0.1.7 cur cur || fail "v0.1.7: single pinned key must verify"
+        # Release keys sign with a subkey: VALIDSIG's primary field must still match.
+        gpg --homedir "$GH" --batch --pinentry-mode loopback --passphrase '' \
+            --quick-add-key "$FPR_CUR" ed25519 sign never >/dev/null 2>&1 || fail "add signing subkey"
+        SUB_CUR="$(gpg --homedir "$GH" --with-colons --list-keys "$FPR_CUR" |
+            awk -F: '$1 == "sub" { s = 1; next } s && $1 == "fpr" { f = $10 } END { print f }')"
+        [ -n "$SUB_CUR" ] && [ "$SUB_CUR" != "$FPR_CUR" ] || fail "signing subkey"
+        d_sub="$(mktemp -d "$WORK/s.XXXXXX")"
+        cp "$WORK/SHA256SUMS" "$d_sub/SHA256SUMS"
+        gpg --homedir "$GH" --batch --armor --export "$FPR_CUR" >"$d_sub/shellsentry-release-signing-key.asc"
+        gpg --homedir "$GH" --batch --yes --pinentry-mode loopback --passphrase '' \
+            -u "${SUB_CUR}!" --armor --detach-sign -o "$d_sub/SHA256SUMS.asc" "$d_sub/SHA256SUMS" ||
+            fail "subkey sign"
+        (
+            VERIFY_GPG=true REQUIRE_MINISIGN=false
+            select_trust_anchor v0.1.7
+            verify_signature "$d_sub/SHA256SUMS" "$d_sub"
+        ) >/dev/null 2>&1 || fail "v0.1.7: subkey signature under the pinned primary must verify"
+        # A single-key file whose signature comes from another key is refused.
+        if gpg_bundle_as v0.1.7 atk cur; then fail "v0.1.7: signature from an unlisted key must be refused"; fi
+        pass "gpg route: key files must hold exactly the pinned primary key"
+
         # A rejected minisign signature must not fall through to a valid GPG one.
         VERIFY_MINISIGN=true
         if gpg_verify_as v0.1.7 cur old; then fail "minisign reject must not fall back to gpg"; fi
