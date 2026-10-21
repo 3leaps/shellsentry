@@ -97,6 +97,26 @@ semver_le_tag() {
     return 0
 }
 
+# select_trust_anchor TAG: set ACTIVE_MINISIGN_PUBKEY, ACTIVE_PGP_FPR and
+# ANCHOR_GEN for the resolved tag. The tag selects exactly one key generation:
+# tags at or below SHELLSENTRY_PREVKEY_MAX are previous-key-signed; tags above
+# are current-key-signed. Refuse non-semver tags rather than guess a key.
+select_trust_anchor() {
+    local version="$1"
+    if ! is_exact_semver_tag "$version"; then
+        err "cannot select trust anchor for non-semver tag: ${version:-<empty>}"
+    fi
+    ACTIVE_MINISIGN_PUBKEY="$SHELLSENTRY_MINISIGN_PUBKEY"
+    ACTIVE_PGP_FPR="$SHELLSENTRY_PGP_FPR"
+    ANCHOR_GEN="current"
+    if semver_le_tag "$version" "$SHELLSENTRY_PREVKEY_MAX"; then
+        ANCHOR_GEN="legacy"
+        ACTIVE_MINISIGN_PUBKEY="$SHELLSENTRY_MINISIGN_PUBKEY_LEGACY"
+        ACTIVE_PGP_FPR="$SHELLSENTRY_PGP_FPR_LEGACY"
+    fi
+    log "trust anchor: ${ANCHOR_GEN} (pin ${version})"
+}
+
 read_release_tag_name() {
     local release_json_file="$1"
     local version=""
@@ -369,7 +389,7 @@ verify_signature() {
         local gpg_key="${tmpdir}/shellsentry-release-signing-key.asc"
         if [ -f "$gpg_key" ]; then
             local fpr
-            fpr=$(gpg --with-colons --import-options show-only --fingerprint "$gpg_key" 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}')
+            fpr=$(gpg --with-colons --import-options show-only --import --fingerprint "$gpg_key" 2>/dev/null | awk -F: '/^fpr:/ {print $10; exit}')
             if [ "$fpr" != "$ACTIVE_PGP_FPR" ]; then
                 err "GPG key fingerprint mismatch (expected ${ACTIVE_PGP_FPR}, got ${fpr:-unknown})"
             fi
@@ -551,21 +571,7 @@ main() {
     version=$(read_release_tag_name "$release_json")
     log "Installing shellsentry ${version}"
 
-    # Pin map: the resolved tag selects exactly one key generation. Tags at or
-    # below SHELLSENTRY_PREVKEY_MAX are previous-key-signed; tags above are
-    # current-key-signed. Refuse non-semver tags rather than guess a key.
-    if ! is_exact_semver_tag "$version"; then
-        err "cannot select trust anchor for non-semver tag: ${version:-<empty>}"
-    fi
-    ACTIVE_MINISIGN_PUBKEY="$SHELLSENTRY_MINISIGN_PUBKEY"
-    ACTIVE_PGP_FPR="$SHELLSENTRY_PGP_FPR"
-    local anchor_gen="current"
-    if semver_le_tag "$version" "$SHELLSENTRY_PREVKEY_MAX"; then
-        anchor_gen="legacy"
-        ACTIVE_MINISIGN_PUBKEY="$SHELLSENTRY_MINISIGN_PUBKEY_LEGACY"
-        ACTIVE_PGP_FPR="$SHELLSENTRY_PGP_FPR_LEGACY"
-    fi
-    log "trust anchor: ${anchor_gen} (pin ${version})"
+    select_trust_anchor "$version"
 
     # Determine archive name
     local archive_name="shellsentry_${platform}"
