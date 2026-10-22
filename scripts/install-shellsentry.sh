@@ -406,19 +406,35 @@ verify_signature() {
             # The key file must hold exactly one primary key, public only, equal
             # to the pin. Count every primary record (pub and sec) so no extra
             # key can ride along; VALIDSIG below independently pins the signer.
-            local listing fprs
+            local listing fprs _f
             if ! listing=$(gpg --homedir "$GPG_HOME" --batch --no-tty --with-colons \
                 --import-options show-only --import "$gpg_key" 2>/dev/null); then
                 gpg_cleanup
                 err "GPG key file could not be read"
             fi
-            if printf '%s\n' "$listing" | grep -q '^sec:'; then
+            # Parse the whole listing in the shell (no pipes: an early-exiting
+            # reader under pipefail could otherwise skip a check).
+            local line rec want=false has_sec=false nprimary=0
+            fprs=""
+            while IFS= read -r line; do
+                rec="${line%%:*}"
+                case "$rec" in
+                    sec) has_sec=true want=true nprimary=$((nprimary + 1)) ;;
+                    pub) want=true nprimary=$((nprimary + 1)) ;;
+                    fpr)
+                        if [ "$want" = true ]; then
+                            IFS=: read -r -a _f <<<"$line"
+                            fprs="${fprs}${fprs:+ }${_f[9]:-}"
+                            want=false
+                        fi
+                        ;;
+                esac
+            done <<<"$listing"
+            if [ "$has_sec" = true ]; then
                 gpg_cleanup
                 err "GPG key file must not contain secret keys"
             fi
-            fprs=$(printf '%s\n' "$listing" |
-                awk -F: '$1 == "pub" || $1 == "sec" { want = 1; next } want && $1 == "fpr" { print $10; want = 0 }')
-            if [ "$(printf '%s\n' "$fprs" | grep -c .)" -ne 1 ]; then
+            if [ "$nprimary" -ne 1 ]; then
                 gpg_cleanup
                 err "GPG key file must contain exactly one primary key"
             fi
@@ -432,7 +448,15 @@ verify_signature() {
             if gpg --batch --no-tty --homedir "$GPG_HOME" --import "$gpg_key" 2>/dev/null &&
                 status=$(gpg --batch --no-tty --homedir "$GPG_HOME" --trust-model always \
                     --status-fd 1 --verify "${sums_file}.asc" "$sums_file" 2>/dev/null); then
-                sig_primary=$(printf '%s\n' "$status" | awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" { print $NF; exit }')
+                sig_primary=""
+                while IFS= read -r line; do
+                    case "$line" in
+                        "[GNUPG:] VALIDSIG "*)
+                            sig_primary="${line##* }"
+                            break
+                            ;;
+                    esac
+                done <<<"$status"
                 if [ "$sig_primary" != "$ACTIVE_PGP_FPR" ]; then
                     gpg_cleanup
                     err "GPG signature is not from the pinned key (got ${sig_primary:-none})"

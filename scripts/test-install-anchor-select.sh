@@ -275,12 +275,47 @@ if command -v minisign >/dev/null 2>&1; then
             fi
         done
         pass "gpg route: key files must hold exactly the pinned primary key"
+        # A key file holding only the pinned primary as a secret key is refused
+        # too, including a large listing (many user ids) that would SIGPIPE an
+        # early-exiting reader.
+        gpg_single_secret_as() {
+            local tag="$1" who="$2" d
+            d="$(mktemp -d "$WORK/x.XXXXXX")"
+            cp "$WORK/SHA256SUMS" "$d/SHA256SUMS"
+            gpg --homedir "$GH" --batch --pinentry-mode loopback --passphrase '' --armor \
+                --export-secret-keys "${who}@test.invalid" >"$d/shellsentry-release-signing-key.asc" ||
+                fail "export secret $who"
+            gpg --homedir "$GH" --batch --yes --pinentry-mode loopback --passphrase '' \
+                -u "${who}@test.invalid" --armor --detach-sign -o "$d/SHA256SUMS.asc" "$d/SHA256SUMS" ||
+                fail "gpg sign as $who"
+            (
+                VERIFY_GPG=true REQUIRE_MINISIGN=false
+                select_trust_anchor "$tag"
+                verify_signature "$d/SHA256SUMS" "$d"
+            ) >/dev/null 2>&1
+        }
+        if gpg_single_secret_as v0.1.7 cur; then fail "v0.1.7: pinned key as secret key must be refused"; fi
+        if gpg_single_secret_as v0.1.6 old; then fail "v0.1.6: pinned key as secret key must be refused"; fi
+        pad="$(printf 'p%.0s' $(seq 1 1500))"
+        for i in $(seq 1 100); do
+            for k in "$FPR_CUR" "$FPR_OLD"; do
+                gpg --homedir "$GH" --batch --pinentry-mode loopback --passphrase '' \
+                    --quick-add-uid "$k" "${i}${pad} <pad${i}@test.invalid>" >/dev/null 2>&1 ||
+                    fail "add padding uid $i"
+            done
+        done
+        mkdir -m 700 "$WORK/probe"
+        big="$(gpg --homedir "$GH" --batch --pinentry-mode loopback --passphrase '' --armor \
+            --export-secret-keys "$FPR_CUR" | gpg --homedir "$WORK/probe" --batch --with-colons \
+            --import-options show-only --import 2>/dev/null | wc -c)" || true
+        [ "${big:-0}" -gt 131072 ] || fail "padded secret listing too small to exercise SIGPIPE (${big:-0} bytes)"
+        if gpg_single_secret_as v0.1.7 cur; then fail "v0.1.7: large pinned secret listing must be refused"; fi
+        if gpg_single_secret_as v0.1.6 old; then fail "v0.1.6: large pinned secret listing must be refused"; fi
         pass "gpg route: secret-key packets refused"
 
         # Production errexit semantics and the production EXIT trap (as main
-        # sets it): unreadable key files fail closed and every GnuPG home is
-        # removed. A home created outside tmpdir would survive the trap and be
-        # found by the scan of fresh GnuPG homes below.
+        # sets it): unreadable key files fail closed and every GnuPG home the
+        # installer passed to gpg is removed, wherever it was created.
         for kind in empty garbage; do
             d="$(mktemp -d "$WORK/e.XXXXXX")"
             cp "$WORK/SHA256SUMS" "$d/SHA256SUMS"
@@ -289,10 +324,23 @@ if command -v minisign >/dev/null 2>&1; then
                 empty) : >"$d/shellsentry-release-signing-key.asc" ;;
                 garbage) printf 'not a key\n' >"$d/shellsentry-release-signing-key.asc" ;;
             esac
-            marker="$WORK/marker.$kind"
-            : >"$marker"
+            # PATH shim: record each --homedir passed to gpg, then run real gpg.
+            shim="$(mktemp -d "$WORK/shim.XXXXXX")"
+            homes_log="$shim/homes.log"
+            : >"$homes_log"
+            real_gpg="$(command -v gpg)"
+            cat >"$shim/gpg" <<SHIM
+#!/usr/bin/env bash
+prev=""
+for a in "\$@"; do
+    [ "\$prev" = "--homedir" ] && printf '%s\\n' "\$a" >>"$homes_log"
+    prev="\$a"
+done
+exec "$real_gpg" "\$@"
+SHIM
+            chmod +x "$shim/gpg"
             set +e
-            bash -c 'set -euo pipefail
+            PATH="$shim:$PATH" bash -c 'set -euo pipefail
                 . "$1"
                 tmpdir="$2"
                 trap '"'"'gpg_cleanup; rm -rf "$tmpdir"'"'"' EXIT
@@ -304,9 +352,11 @@ if command -v minisign >/dev/null 2>&1; then
             set -e
             [ "$rc" -ne 0 ] || fail "$kind key file must fail closed"
             [ ! -e "$d" ] || fail "$kind key file left tmpdir behind"
-            leaked="$(find "${TMPDIR:-/tmp}" /tmp -maxdepth 2 -name pubring.kbx -newer "$marker" 2>/dev/null |
-                grep -v "^$WORK/" || true)"
-            [ -z "$leaked" ] || fail "$kind key file leaked a GnuPG home: $leaked"
+            # Every --homedir the installer handed to gpg must be gone.
+            while IFS= read -r h; do
+                [ -z "$h" ] || [ ! -e "$h" ] || fail "$kind key file leaked a GnuPG home: $h"
+            done <"$homes_log"
+            [ -s "$homes_log" ] || fail "$kind: gpg shim saw no --homedir (harness not exercising gpg)"
         done
         pass "gpg route: unreadable key files fail closed with cleanup"
 
