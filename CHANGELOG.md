@@ -7,6 +7,40 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-21
+
+### Security
+
+- Built with Go 1.26.10, resolving GO-2026-5026, GO-2026-5972, GO-2026-6090,
+  GO-2026-6218, GO-2026-6603, GO-2026-6605, GO-2026-6607, GO-2026-6608,
+  GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613, GO-2026-6617, and
+  GO-2026-6809, which were reachable when built with Go 1.26.5.
+- `golang.org/x/crypto` v0.58.0 (GO-2026-6303, GO-2026-6354, GO-2026-6355;
+  not called).
+
+### Changed
+
+- Go toolchain: `go 1.26.0` with `toolchain go1.26.10`; CI and release use Go 1.26.10.
+- Dependencies: `golang.org/x/crypto` v0.58.0, `golang.org/x/sys` v0.49.0.
+- Release signing anchors rotated to the current organization keys. The installer
+  selects the key by tag (v0.1.6 and earlier: previous keys; later: current keys)
+  with no fallback. Self-update from v0.1.6 or earlier requires a one-time reinstall.
+- Bootstrap pins: sfetch v0.4.13 with its engine/action commit, engine SHA-256 and
+  current anchor; goneat v0.6.6; golangci-lint v2.14.0 (was unpinned).
+
+### Fixed
+
+- `install-shellsentry.sh` GPG route now reads the release key file's fingerprint;
+  previously it failed closed with a fingerprint mismatch. The key file must
+  contain exactly one primary key equal to the pinned fingerprint, and the
+  signature must come from that key. Key files with secret-key
+  packets are refused.
+
+### Added
+
+- `make test-install-anchor-select` installer key-selection regression (runs in
+  `make prepush`), covering selection through minisign and GPG verification.
+
 ## [0.1.6] - 2026-07-31
 
 ### Added
@@ -132,7 +166,9 @@ Semantic Versioning.
 - Pinned tool minimums: sfetch v0.3.1 and goneat v0.4.0 (existing installs respected).
 - Normalized formatting across docs, schemas, and testdata with goneat format.
 
-[Unreleased]: https://github.com/3leaps/shellsentry/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/3leaps/shellsentry/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/3leaps/shellsentry/compare/v0.1.6...v0.1.7
+[0.1.6]: https://github.com/3leaps/shellsentry/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/3leaps/shellsentry/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/3leaps/shellsentry/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/3leaps/shellsentry/compare/v0.1.2...v0.1.3

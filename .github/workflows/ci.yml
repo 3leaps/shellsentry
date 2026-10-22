@@ -14,9 +14,9 @@ env:
   GH_TOKEN: ${{ github.token }}
   SFETCH_GITHUB_TOKEN: ${{ github.token }}
   # Keep in sync with Makefile SFETCH_ACTION_SHA / SFETCH_VERSION (assert-sfetch-pin-coupling).
-  SFETCH_ACTION_SHA: 0c2e7490420100b5d35a9e01f96f4aea8679663e
-  SFETCH_VERSION: v0.4.11
-  GONEAT_VERSION: v0.5.15
+  SFETCH_ACTION_SHA: d0ad13eb352c18f56604c483c733d425af6e9763
+  SFETCH_VERSION: v0.4.13
+  GONEAT_VERSION: v0.6.6
 
 jobs:
   test:
@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       # No minisign here — verified bootstrap must not see ambient verifier.
       - name: Install system tools
@@ -48,9 +48,9 @@ jobs:
           echo "[ok] clean-runner preflight: no ambient sfetch/goneat/minisign"
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763
         with:
-          sfetch-version: v0.4.11
+          sfetch-version: v0.4.13
           install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch (pinned)
@@ -108,7 +108,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       - name: Install system tools
         run: |
@@ -127,9 +127,9 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763
         with:
-          sfetch-version: v0.4.11
+          sfetch-version: v0.4.13
           install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch (pinned)
@@ -159,7 +159,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       - name: Preflight no ambient sfetch/goneat when possible
         run: |
@@ -195,7 +195,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       - name: Preflight no ambient sfetch/goneat/minisign
         shell: bash
@@ -209,9 +209,9 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763
         with:
-          sfetch-version: v0.4.11
+          sfetch-version: v0.4.13
           install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch
@@ -256,7 +256,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.10'
 
       - name: Preflight no ambient sfetch/goneat/minisign
         shell: bash
@@ -270,9 +270,9 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@0c2e7490420100b5d35a9e01f96f4aea8679663e
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763
         with:
-          sfetch-version: v0.4.11
+          sfetch-version: v0.4.13
           install-dir: ${{ github.workspace }}/bin
 
       - name: Verify install script detects windows arm64

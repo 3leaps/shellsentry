@@ -11,14 +11,28 @@ fail() {
 }
 pass() { echo "PASS: $*"; }
 
+# Pins come from the Makefile so this harness tracks every pin advance.
+get_make_var() {
+    local name="$1"
+    grep -E "^${name}[[:space:]]*(\\?=|:=|=)" Makefile | head -n1 |
+        sed -E "s/^${name}[[:space:]]*(\\?=|:=|=)[[:space:]]*//" |
+        tr -d '\r' | sed 's/[[:space:]]*#.*//' | tr -d '[:space:]'
+}
+PIN_VERSION="$(get_make_var SFETCH_VERSION)"
+PIN_ENGINE_SHA="$(get_make_var SFETCH_ENGINE_SHA)"
+PIN_ENGINE_SUM="$(get_make_var SFETCH_ENGINE_SHA256)"
+PIN_ANCHOR="$(get_make_var SFETCH_MINISIGN_PUBKEY)"
+[ -n "$PIN_VERSION" ] && [ -n "$PIN_ENGINE_SHA" ] && [ -n "$PIN_ENGINE_SUM" ] && [ -n "$PIN_ANCHOR" ] ||
+    fail "missing Makefile sfetch pins"
+
 # --- Wrong engine digest fails before execution ---
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/shs-neg.XXXXXX")"
 trap 'rm -rf "${WORKDIR}"' EXIT
 
 set +e
 OUT="${WORKDIR}/bad-digest.txt"
-SFETCH_VERSION=v0.4.11 \
-    SFETCH_ENGINE_SHA=0c2e7490420100b5d35a9e01f96f4aea8679663e \
+SFETCH_VERSION="$PIN_VERSION" \
+    SFETCH_ENGINE_SHA="$PIN_ENGINE_SHA" \
     SFETCH_ENGINE_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
     INSTALL_DIR="${WORKDIR}/should-not-exist" \
     ./scripts/install-sfetch-verified.sh >"$OUT" 2>&1
@@ -34,8 +48,8 @@ pass "wrong engine digest fails closed before install"
 set +e
 OUT2="${WORKDIR}/latest.txt"
 SFETCH_VERSION=latest \
-    SFETCH_ENGINE_SHA=0c2e7490420100b5d35a9e01f96f4aea8679663e \
-    SFETCH_ENGINE_SHA256=b45f0b0eb0e94728253de4dfb4306a3965e7266103a22c7cfdf1a6de62308b9a \
+    SFETCH_ENGINE_SHA="$PIN_ENGINE_SHA" \
+    SFETCH_ENGINE_SHA256="$PIN_ENGINE_SUM" \
     INSTALL_DIR="${WORKDIR}/latest-dir" \
     ./scripts/install-sfetch-verified.sh >"$OUT2" 2>&1
 RC=$?
@@ -44,8 +58,8 @@ set -e
 pass "floating version latest refused"
 
 # --- Tampered installer fails minisign before bash (manual 3-step) ---
-ANCHOR="RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC"
-BASE="https://github.com/3leaps/sfetch/releases/download/v0.4.11"
+ANCHOR="$PIN_ANCHOR"
+BASE="https://github.com/3leaps/sfetch/releases/download/${PIN_VERSION}"
 curl -fsSL -o "${WORKDIR}/install-sfetch.sh" "${BASE}/install-sfetch.sh"
 curl -fsSL -o "${WORKDIR}/install-sfetch.sh.minisig" "${BASE}/install-sfetch.sh.minisig"
 printf 'untrusted comment: sfetch\n%s\n' "$ANCHOR" >"${WORKDIR}/anchor.pub"

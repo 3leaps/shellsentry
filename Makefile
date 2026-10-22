@@ -40,19 +40,19 @@ BIN_DIR := $(CURDIR)/bin
 
 # Pinned tool versions (bootstrap installs these into BIN_DIR; do not float)
 # SFETCH_VERSION is a published consumable release (minisig path requires >= v0.4.11).
-SFETCH_VERSION := v0.4.11
+SFETCH_VERSION := v0.4.13
 # Immutable sfetch engine pin (action/repo commit that owns bootstrap-sfetch-verified.sh).
 # Coupled with SFETCH_VERSION: advancing the product pin may require a new engine SHA
 # when SFETCH_BOOTSTRAP_MAX moves (see sfetch docs/cicd-usage-guide.md).
-SFETCH_ENGINE_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
-SFETCH_ENGINE_SHA256 := b45f0b0eb0e94728253de4dfb4306a3965e7266103a22c7cfdf1a6de62308b9a
+SFETCH_ENGINE_SHA := d0ad13eb352c18f56604c483c733d425af6e9763
+SFETCH_ENGINE_SHA256 := ccdc7e66daacb960c0cce08bced14896b13df6f90dfa5ae43f2d54ca0f95d990
 # Composite action pin (same commit as engine for this train).
-SFETCH_ACTION_SHA := 0c2e7490420100b5d35a9e01f96f4aea8679663e
+SFETCH_ACTION_SHA := d0ad13eb352c18f56604c483c733d425af6e9763
 # Engine source repo (flag-owned; no ambient env seam).
 SFETCH_ENGINE_REPO := 3leaps/sfetch
 # Embedded consumer trust anchor (do not fetch sfetch-minisign.pub from releases).
-SFETCH_MINISIGN_PUBKEY := RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC
-GONEAT_VERSION ?= v0.5.15
+SFETCH_MINISIGN_PUBKEY := RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
+GONEAT_VERSION ?= v0.6.6
 GOVULNCHECK_VERSION ?= v1.6.0
 STATICCHECK_VERSION ?= v0.6.1
 
@@ -76,7 +76,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
 .PHONY: release-clean bootstrap-script verify-release-key
-.PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match
+.PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
 .PHONY: dogfood assert-no-pipe-install-sfetch check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-bootstrap-negative-controls
 
@@ -230,7 +230,7 @@ govulncheck: ## Run pinned govulncheck vulnerability scan
 precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	@echo "[ok] Pre-commit checks passed"
 
-prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
+prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
 	@echo "[ok] Pre-push checks passed"
 
 assess: ## Run goneat assess (format, lint, security)
@@ -321,6 +321,9 @@ test-release-verify-checksums: ## Regression: fail-closed checksum verify (corru
 # Current-pin vs stale-pin coverage for bootstrap version matching (fixed-string).
 test-bootstrap-pin-match: ## Regression: version-matches-pin current + stale cases
 	@./scripts/test-bootstrap-pin-match.sh
+
+test-install-anchor-select: ## Regression: installer pin-map anchor selection (unit + coherence)
+	@./scripts/test-install-anchor-select.sh
 
 release-notes: ## Copy release notes into dist/release
 	@if [ -z "$(RELEASE_TAG)" ]; then echo "error: RELEASE_TAG not set" >&2; exit 1; fi

@@ -22,10 +22,10 @@ else
     fail "sfetch 0.4.9 should match pin v0.4.9"
 fi
 
-if "$MATCH" "goneat v0.5.15" "v0.5.15"; then
+if "$MATCH" "goneat v0.6.6" "v0.6.6"; then
     pass "goneat current pin (v-prefix in both)"
 else
-    fail "goneat v0.5.15 should match pin v0.5.15"
+    fail "goneat v0.6.6 should match pin v0.6.6"
 fi
 
 if "$MATCH" "sfetch 0.4.9" "0.4.9"; then
@@ -34,10 +34,10 @@ else
     fail "sfetch 0.4.9 should match bare pin 0.4.9"
 fi
 
-if "$MATCH" "goneat version 0.5.15" "v0.5.15"; then
+if "$MATCH" "goneat version 0.6.6" "v0.6.6"; then
     pass "goneat multi-token version line"
 else
-    fail "goneat version 0.5.15 should match pin v0.5.15"
+    fail "goneat version 0.6.6 should match pin v0.6.6"
 fi
 
 # --- stale pin rejects ---
@@ -47,8 +47,8 @@ else
     pass "stale sfetch pin rejected"
 fi
 
-if "$MATCH" "goneat v0.5.7" "v0.5.15"; then
-    fail "stale goneat v0.5.7 must not match pin v0.5.15"
+if "$MATCH" "goneat v0.5.15" "v0.6.6"; then
+    fail "stale goneat v0.5.15 must not match pin v0.6.6"
 else
     pass "stale goneat pin rejected"
 fi
