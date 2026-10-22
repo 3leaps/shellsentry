@@ -235,7 +235,80 @@ if command -v minisign >/dev/null 2>&1; then
         ) >/dev/null 2>&1 || fail "v0.1.7: subkey signature under the pinned primary must verify"
         # A single-key file whose signature comes from another key is refused.
         if gpg_bundle_as v0.1.7 atk cur; then fail "v0.1.7: signature from an unlisted key must be refused"; fi
+        # Secret-key packets: a bundle carrying any secret primary is refused,
+        # with either signer, either order, either generation.
+        gpg_secret_bundle_as() {
+            local tag="$1" signer="$2" pub="$3" sec="$4" order="$5" d
+            d="$(mktemp -d "$WORK/k.XXXXXX")"
+            cp "$WORK/SHA256SUMS" "$d/SHA256SUMS"
+            local f="$d/shellsentry-release-signing-key.asc"
+            if [ "$order" = append ]; then
+                gpg --homedir "$GH" --batch --armor --export "${pub}@test.invalid" >>"$f"
+            fi
+            gpg --homedir "$GH" --batch --pinentry-mode loopback --passphrase '' --armor \
+                --export-secret-keys "${sec}@test.invalid" >>"$f" || fail "export secret $sec"
+            if [ "$order" = prepend ]; then
+                gpg --homedir "$GH" --batch --armor --export "${pub}@test.invalid" >>"$f"
+            fi
+            gpg --homedir "$GH" --batch --yes --pinentry-mode loopback --passphrase '' \
+                -u "${signer}@test.invalid" --armor --detach-sign -o "$d/SHA256SUMS.asc" "$d/SHA256SUMS" ||
+                fail "gpg sign as $signer"
+            (
+                VERIFY_GPG=true REQUIRE_MINISIGN=false
+                select_trust_anchor "$tag"
+                verify_signature "$d/SHA256SUMS" "$d"
+            ) >/dev/null 2>&1
+        }
+        for order in append prepend; do
+            for signer in atk cur; do
+                if gpg_secret_bundle_as v0.1.7 "$signer" cur atk "$order"; then
+                    fail "v0.1.7: secret-key bundle ($order, signer $signer) must be refused"
+                fi
+            done
+            for signer in atk old; do
+                if gpg_secret_bundle_as v0.1.6 "$signer" old atk "$order"; then
+                    fail "v0.1.6: secret-key bundle ($order, signer $signer) must be refused"
+                fi
+            done
+            if gpg_secret_bundle_as v0.1.7 cur cur old "$order"; then
+                fail "v0.1.7: bundle with legacy secret key ($order) must be refused"
+            fi
+        done
         pass "gpg route: key files must hold exactly the pinned primary key"
+        pass "gpg route: secret-key packets refused"
+
+        # Production errexit semantics and the production EXIT trap (as main
+        # sets it): unreadable key files fail closed and every GnuPG home is
+        # removed. A home created outside tmpdir would survive the trap and be
+        # found by the scan of fresh GnuPG homes below.
+        for kind in empty garbage; do
+            d="$(mktemp -d "$WORK/e.XXXXXX")"
+            cp "$WORK/SHA256SUMS" "$d/SHA256SUMS"
+            : >"$d/SHA256SUMS.asc"
+            case "$kind" in
+                empty) : >"$d/shellsentry-release-signing-key.asc" ;;
+                garbage) printf 'not a key\n' >"$d/shellsentry-release-signing-key.asc" ;;
+            esac
+            marker="$WORK/marker.$kind"
+            : >"$marker"
+            set +e
+            bash -c 'set -euo pipefail
+                . "$1"
+                tmpdir="$2"
+                trap '"'"'gpg_cleanup; rm -rf "$tmpdir"'"'"' EXIT
+                VERIFY_MINISIGN=false VERIFY_GPG=true REQUIRE_MINISIGN=false REQUIRE_SIGNATURE=true
+                SHELLSENTRY_PGP_FPR="$3"
+                select_trust_anchor v0.1.7
+                verify_signature "$tmpdir/SHA256SUMS" "$tmpdir"' _ "$SRC_COPY" "$d" "$FPR_CUR" >/dev/null 2>&1
+            rc=$?
+            set -e
+            [ "$rc" -ne 0 ] || fail "$kind key file must fail closed"
+            [ ! -e "$d" ] || fail "$kind key file left tmpdir behind"
+            leaked="$(find "${TMPDIR:-/tmp}" /tmp -maxdepth 2 -name pubring.kbx -newer "$marker" 2>/dev/null |
+                grep -v "^$WORK/" || true)"
+            [ -z "$leaked" ] || fail "$kind key file leaked a GnuPG home: $leaked"
+        done
+        pass "gpg route: unreadable key files fail closed with cleanup"
 
         # A rejected minisign signature must not fall through to a valid GPG one.
         VERIFY_MINISIGN=true
