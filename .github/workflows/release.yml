@@ -7,7 +7,7 @@ name: Release
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   NAME: shellsentry
@@ -15,29 +15,33 @@ env:
 jobs:
   create_release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
       # softprops/action-gh-release@v3 (Node 24) replaces the archived,
       # Node12-era actions/create-release@v1 + actions/upload-release-asset@v1.
-      # It creates the release for the pushed tag (idempotent) and uploads the
+      # It creates a draft for the pushed tag (idempotent) and uploads the
       # install script. The build matrix below appends per-platform archives.
-      # Maintainer signs + adds SHA*SUMS/notes afterward via scripts/
-      # (see RELEASE_CHECKLIST.md).
-      - name: Create release and upload install script
-        uses: softprops/action-gh-release@v3
+      # Maintainer signs + publishes afterward via scripts/ (see RELEASE_CHECKLIST.md).
+      # Every release-writing action must set draft: true so CI cannot publish.
+      - name: Create draft release and upload install script
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           name: shellsentry ${{ github.ref_name }}
           body: |
             ## shellsentry ${{ github.ref_name }}
-            Auto-generated release.
-          draft: false
+            Draft release — incomplete until the maintainer signs and publishes.
+          draft: true
           prerelease: false
           files: scripts/install-shellsentry.sh
 
   build:
     needs: create_release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -113,12 +117,13 @@ jobs:
           echo "ASSET_FILE=${ARCHIVE}" >> "$GITHUB_ENV"
           echo "ASSET_CONTENT_TYPE=${CONTENT_TYPE}" >> "$GITHUB_ENV"
 
-      # Appends this matrix entry's archive to the release created above.
-      # action-gh-release@v3 is idempotent on the tag; parallel matrix jobs each
-      # upload a distinctly-named asset, so no upload_url plumbing is needed.
+      # Reopens the same release as a draft while appending this matrix entry's
+      # archive. Every release-writing action must state draft: true so parallel
+      # uploads cannot publish before signing.
       - name: Upload Archive
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
+          draft: true
           files: ${{ env.ASSET_FILE }}
 
       - name: Signing handled manually

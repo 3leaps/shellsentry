@@ -23,7 +23,8 @@ This document walks maintainers through the build/sign/upload flow for each shel
 - [ ] Wait for GitHub Actions release workflow to complete
   - CI validates VERSION file matches tag
   - Builds unsigned archives
-  - Uploads install-shellsentry.sh
+  - Creates a **draft** GitHub release and uploads install-shellsentry.sh plus archives
+  - CI cannot publish; the draft stays unpublished until after signing
 
 ## 2. Manual Signing (local machine)
 
@@ -112,6 +113,7 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/custom/gpg/homedir   # optional, default
 
 ## 3. Post-Release
 
+- [ ] Publish the signed draft: `gh release edit v$(cat VERSION) --draft=false`
 - [ ] Verify release: `gh release view v$(cat VERSION)`
 - [ ] Test install script: `curl -sSfL .../install-shellsentry.sh | bash -s -- --dry-run`
 - [ ] Verify binary version: `shellsentry --version` shows correct version

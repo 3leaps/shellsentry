@@ -82,6 +82,10 @@ validate() {
         err="${err}gosec-high must check command -v gosec; "
     printf '%s\n' "$gosec_high" | grep -Fq 'exit 1' ||
         err="${err}gosec-high must exit 1 when gosec is missing; "
+    printf '%s\n' "$gosec_high" | grep -Fq 'go version -m' ||
+        err="${err}gosec-high must assert installed version via go version -m; "
+    printf '%s\n' "$gosec_high" | grep -Fq 'version mismatch' ||
+        err="${err}gosec-high must fail on version mismatch; "
 
     precommit="$(extract_target "$makefile" precommit)"
     printf '%s\n' "$precommit" | grep -Eq '\$\(MAKE\)[[:space:]]+gosec-high' ||
@@ -142,6 +146,28 @@ if msg="$(validate "$scratch/Makefile" "$CI" "$TOOLS")"; then
     fail "validator accepted gosec-high without command -v guard"
 fi
 pass "validator rejects missing command -v guard"
+
+# --- Mutant: gosec-high keeps command -v but drops the version assert ---
+awk '
+    BEGIN { skip=0 }
+    /^gosec-high:/ { print; skip=1; next }
+    skip && /^[^[:space:]#]/ { skip=0 }
+    skip { next }
+    { print }
+' "$MAKEFILE" >"$scratch/Makefile"
+{
+    printf '%s\n' 'gosec-high: ## Run gosec (high confidence only)'
+    printf '\t%s\n' '@export PATH="$(BIN_DIR):$$PATH"; \'
+    printf '\t%s\n' 'if ! command -v gosec >/dev/null 2>&1; then \'
+    printf '\t\t%s\n' 'echo "[!!] gosec not found on PATH; run '\''make gosec-install'\'' (pinned $(GOSEC_VERSION))" >&2; \'
+    printf '\t\t%s\n' 'exit 1; \'
+    printf '\t%s\n' 'fi; \'
+    printf '\t%s\n' 'gosec -confidence high -exclude G301,G302,G107,G304 ./...'
+} >>"$scratch/Makefile"
+if msg="$(validate "$scratch/Makefile" "$CI" "$TOOLS")"; then
+    fail "validator accepted gosec-high without version assert"
+fi
+pass "validator rejects missing gosec-high version assert"
 
 # --- Mutant: gosec-high dropped from precommit ---
 awk '

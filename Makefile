@@ -73,7 +73,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 
 .PHONY: all help build test clean install fmt fmt-check lint check-all version tools prereqs bootstrap bootstrap-force build-all assess
 .PHONY: schema-validate schema-meta sarif-validate precommit prepush govulncheck
-.PHONY: gosec gosec-high gosec-install test-gosec-pin
+.PHONY: gosec gosec-high gosec-install test-gosec-pin test-release-workflow-draft
 .PHONY: release-download release-checksums release-verify-checksums release-sign
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
@@ -241,6 +241,11 @@ gosec-high: ## Run gosec (high confidence only)
 		echo "[!!] gosec not found on PATH; run 'make gosec-install' (pinned $(GOSEC_VERSION))" >&2; \
 		exit 1; \
 	fi; \
+	modver="$$(go version -m "$$(command -v gosec)" 2>/dev/null | awk '$$1=="mod" && $$2=="github.com/securego/gosec/v2" {print $$3; exit}')"; \
+	if [ -z "$$modver" ] || [ "$$modver" != "$(GOSEC_VERSION)" ]; then \
+		echo "[!!] gosec version mismatch (have: $$modver; want: $(GOSEC_VERSION))" >&2; \
+		exit 1; \
+	fi; \
 	gosec -confidence high -exclude G301,G302,G107,G304 ./...
 
 test: ## Run tests
@@ -255,6 +260,7 @@ govulncheck: ## Run pinned govulncheck vulnerability scan
 precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	$(MAKE) test-gosec-pin
 	$(MAKE) gosec-high
+	$(MAKE) test-release-workflow-draft
 	@echo "[ok] Pre-commit checks passed"
 
 prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
@@ -354,6 +360,9 @@ test-install-anchor-select: ## Regression: installer pin-map anchor selection (u
 
 test-gosec-pin: ## Regression: gosec pin and fail-closed missing-binary guard
 	@./scripts/test-gosec-pin.sh
+
+test-release-workflow-draft: ## Regression: every release-writing action preserves draft state
+	@python3 ./scripts/test-release-workflow-draft.py
 
 release-notes: ## Copy release notes into dist/release
 	@if [ -z "$(RELEASE_TAG)" ]; then echo "error: RELEASE_TAG not set" >&2; exit 1; fi
