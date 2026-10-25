@@ -152,7 +152,9 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
   runs `gh release edit --draft=false`.
 
 - [ ] Verify release: `gh release view "$SHELLSENTRY_RELEASE_TAG"`
-- [ ] Test install script: `curl -sSfL .../install-shellsentry.sh | bash -s -- --dry-run`
+- [ ] Test install script: download `install-shellsentry.sh`, verify it against
+      `SHA256SUMS` plus minisign or PGP, optionally run shellsentry on it, then
+      `bash install-shellsentry.sh --dry-run`
 - [ ] Verify binary version: `shellsentry --version` shows correct version
 - [ ] Announce release
 

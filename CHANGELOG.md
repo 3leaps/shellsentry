@@ -33,6 +33,10 @@ Semantic Versioning.
 - **Operator-home agent kill via `GNUPGHOME`.** The smartcard fixture refuses
   a bare `gpgconf --kill` while `GNUPGHOME` is the operator home, not only
   an explicit `--homedir`.
+- **Install docs do not pipe curl to a shell.** Upgrade and install examples
+  download the installer, verify `SHA256SUMS` plus minisign or PGP, optionally
+  run shellsentry on it, then execute. `scripts/test-no-pipe-to-shell-docs.sh`
+  fails if a `curl ... | bash` install recipe is restored.
 
 ### Added
 

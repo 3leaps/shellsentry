@@ -138,8 +138,10 @@ func darwinAMD64RetirementMessage(targetTag string) string {
 	return fmt.Sprintf(
 		"shellsentry %s does not ship darwin/amd64 (Intel Mac) artifacts. "+
 			"darwin/amd64 was retired after %s. "+
-			"Pin the last supporting release with the installer: "+
-			"curl -fsSL https://github.com/3leaps/shellsentry/releases/download/%s/install-shellsentry.sh | bash -s -- --tag %s  "+
+			"Pin the last supporting release: download install-shellsentry.sh, SHA256SUMS, and SHA256SUMS.minisig "+
+			"(or SHA256SUMS.asc) from https://github.com/3leaps/shellsentry/releases/download/%s , "+
+			"verify SHA256SUMS with minisign or PGP, optionally run shellsentry on the installer, "+
+			"then: bash install-shellsentry.sh --tag %s  "+
 			"Or build from source: GOOS=darwin GOARCH=amd64 go build -o shellsentry .",
 		targetTag, LastDarwinAMD64Tag, LastDarwinAMD64Tag, LastDarwinAMD64Tag,
 	)

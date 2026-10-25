@@ -36,6 +36,9 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
   `head`, so extra output cannot SIGPIPE the pin check.
 - The smartcard fixture refuses a bare `gpgconf --kill` while `GNUPGHOME` is
   the operator home.
+- Upgrade and install examples download the installer, verify `SHA256SUMS`
+  plus minisign or PGP, optionally run shellsentry on it, then execute. They
+  do not pipe curl to a shell.
 
 ### Added
 
@@ -47,10 +50,19 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
 ### Upgrading
 
 Self-update from v0.1.7 works. Binaries through v0.1.6 still need a one-time
-reinstall under the current keys:
+reinstall under the current keys. Download the installer, verify it, then run
+it — do not pipe curl to a shell.
 
 ```bash
-curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.8/install-shellsentry.sh | bash -s -- --tag v0.1.8
+BASE=https://github.com/3leaps/shellsentry/releases/download/v0.1.8
+curl -sSfLO "$BASE/install-shellsentry.sh"
+curl -sSfLO "$BASE/SHA256SUMS"
+curl -sSfLO "$BASE/SHA256SUMS.minisig"
+minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
+# or: curl -sSfLO "$BASE/SHA256SUMS.asc" && gpg --verify SHA256SUMS.asc SHA256SUMS
+grep 'install-shellsentry.sh' SHA256SUMS | sha256sum -c
+# optional: shellsentry --exit-on-danger install-shellsentry.sh
+bash install-shellsentry.sh --tag v0.1.8
 ```
 
 ---
@@ -99,10 +111,19 @@ curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.8/instal
 ### Upgrading
 
 Self-update in v0.1.6 and earlier embeds the previous key and rejects v0.1.7.
-Reinstall once with `install-shellsentry.sh` or sfetch:
+Reinstall once with `install-shellsentry.sh` or sfetch. Download the installer,
+verify it, then run it — do not pipe curl to a shell.
 
 ```bash
-curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.7/install-shellsentry.sh | bash -s -- --tag v0.1.7
+BASE=https://github.com/3leaps/shellsentry/releases/download/v0.1.7
+curl -sSfLO "$BASE/install-shellsentry.sh"
+curl -sSfLO "$BASE/SHA256SUMS"
+curl -sSfLO "$BASE/SHA256SUMS.minisig"
+minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
+# or: curl -sSfLO "$BASE/SHA256SUMS.asc" && gpg --verify SHA256SUMS.asc SHA256SUMS
+grep 'install-shellsentry.sh' SHA256SUMS | sha256sum -c
+# optional: shellsentry --exit-on-danger install-shellsentry.sh
+bash install-shellsentry.sh --tag v0.1.7
 ```
 
 Self-update works again from v0.1.7 onward.

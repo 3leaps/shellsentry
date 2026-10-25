@@ -53,10 +53,14 @@ func TestDarwinAMD64RetirementMessage(t *testing.T) {
 		LastDarwinAMD64Tag,
 		"--tag " + LastDarwinAMD64Tag,
 		"v0.1.5",
+		"SHA256SUMS",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q: %s", want, msg)
 		}
+	}
+	if strings.Contains(msg, "| bash") || strings.Contains(msg, "| sh") {
+		t.Errorf("retirement message must not recommend pipe-to-shell: %s", msg)
 	}
 }
 

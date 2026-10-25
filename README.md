@@ -101,24 +101,50 @@ shellsentry --format sarif script.sh   # SARIF for GitHub Code Scanning
 
 ## Installation
 
+Download the installer, verify it against `SHA256SUMS` plus minisign or PGP,
+optionally run shellsentry on it, then run it. Do not pipe curl to a shell.
+
 ### Recommended: install sfetch, then fetch shellsentry
 
 ```bash
-curl -sSfL https://github.com/3leaps/sfetch/releases/latest/download/install-sfetch.sh | bash
+BASE=https://github.com/3leaps/sfetch/releases/latest/download
+curl -sSfLO "$BASE/install-sfetch.sh"
+curl -sSfLO "$BASE/SHA256SUMS"
+curl -sSfLO "$BASE/SHA256SUMS.minisig"
+minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
+grep 'install-sfetch.sh' SHA256SUMS | sha256sum -c
+# optional: shellsentry --exit-on-danger install-sfetch.sh
+bash install-sfetch.sh
 sfetch --repo 3leaps/shellsentry --latest --dest-dir ~/.local/bin
 ```
 
 ### Alternative: verified bootstrap installer
 
 ```bash
-curl -sSfL https://github.com/3leaps/shellsentry/releases/latest/download/install-shellsentry.sh | bash
+BASE=https://github.com/3leaps/shellsentry/releases/latest/download
+curl -sSfLO "$BASE/install-shellsentry.sh"
+curl -sSfLO "$BASE/SHA256SUMS"
+curl -sSfLO "$BASE/SHA256SUMS.minisig"
+minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
+# or: curl -sSfLO "$BASE/SHA256SUMS.asc" && gpg --verify SHA256SUMS.asc SHA256SUMS
+grep 'install-shellsentry.sh' SHA256SUMS | sha256sum -c
+# optional: shellsentry --exit-on-danger install-shellsentry.sh
+bash install-shellsentry.sh
 ```
 
 Supported release artifacts (from v0.1.5): Linux amd64/arm64, macOS arm64, Windows amd64/arm64.
-macOS Intel (`darwin/amd64`) users should pin the last supporting release:
+macOS Intel (`darwin/amd64`) users should pin the last supporting release.
+v0.1.4 verifies under the previous minisign key:
 
 ```bash
-curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.4/install-shellsentry.sh | bash -s -- --tag v0.1.4
+BASE=https://github.com/3leaps/shellsentry/releases/download/v0.1.4
+curl -sSfLO "$BASE/install-shellsentry.sh"
+curl -sSfLO "$BASE/SHA256SUMS"
+curl -sSfLO "$BASE/SHA256SUMS.minisig"
+minisign -Vm SHA256SUMS -P RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC
+grep 'install-shellsentry.sh' SHA256SUMS | sha256sum -c
+# optional: shellsentry --exit-on-danger install-shellsentry.sh
+bash install-shellsentry.sh --tag v0.1.4
 ```
 
 ### From source

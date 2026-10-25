@@ -3,7 +3,13 @@
 # install-shellsentry.sh - Bootstrap installer for shellsentry
 #
 # Usage:
-#   curl -sSfL https://github.com/3leaps/shellsentry/releases/latest/download/install-shellsentry.sh | bash
+#   Download install-shellsentry.sh, SHA256SUMS, and SHA256SUMS.minisig (or
+#   SHA256SUMS.asc) from the same GitHub release. Verify SHA256SUMS with
+#   minisign or gpg, check the installer checksum, optionally run shellsentry
+#   on the installer, then:
+#     bash install-shellsentry.sh
+#     bash install-shellsentry.sh --tag vX.Y.Z
+#   Do not pipe curl to a shell.
 #
 # Options:
 #   --tag vX.Y.Z         Install specific version (default: latest)
