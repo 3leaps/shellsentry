@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Create and verify a signed annotated tag locally. Does not push.
+# Signs in the operator GPG home so hardware-backed / non-exportable subkeys
+# work. Does not export secret keys. Public-pin verification uses a disposable
+# keyring in verify-pinned-tag.sh; this script never kills the operator agent.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=scripts/release-ci-refuse.sh
@@ -21,31 +24,25 @@ case "$SHELLSENTRY_GPG_HOMEDIR" in
     "$root" | "$root"/*) die 'GPG home must be outside the repository' ;;
 esac
 [[ "$SHELLSENTRY_GPG_HOMEDIR" != "${HOME:-/}/.gnupg" ]] || die 'GPG home must not be the default homedir'
+mode="$(stat -c '%a' "$SHELLSENTRY_GPG_HOMEDIR" 2>/dev/null || stat -f '%OLp' "$SHELLSENTRY_GPG_HOMEDIR")"
+[[ "$mode" == "700" ]] || die 'GPG home must be mode 0700'
 [[ -z "$(git status --porcelain --untracked-files=all)" ]] || die 'clean checkout required'
 [[ -z "$(git show-ref --tags "refs/tags/$tag" || true)" ]] || die 'local tag already exists'
 
-sign_home="$(mktemp -d "${TMPDIR:-/tmp}/shs-tag-sign.XXXXXX")"
-cleanup() {
-    if [[ -n "${sign_home:-}" ]]; then
-        gpgconf --homedir "$sign_home" --kill all >/dev/null 2>&1 || true
-        rm -rf "$sign_home"
-    fi
-}
-trap cleanup EXIT
-chmod 700 "$sign_home"
-if ! gpg --homedir "$SHELLSENTRY_GPG_HOMEDIR" --batch --export-secret-keys "${SHELLSENTRY_PGP_KEY_ID%!}" 2>/dev/null |
-    gpg --homedir "$sign_home" --batch --import >/dev/null 2>&1; then
-    die 'cannot import signing material into isolated home'
-fi
-uid="$(gpg --homedir "$sign_home" --batch --with-colons --list-keys | awk -F: '$1=="uid" {print $10;exit}')"
+uid="$(gpg --homedir "$SHELLSENTRY_GPG_HOMEDIR" --batch --with-colons --list-keys "${SHELLSENTRY_PGP_KEY_ID%!}" |
+    awk -F: '$1=="uid" {print $10;exit}')"
 [[ -n "$uid" ]] || die 'signing key has no uid'
 name="${uid%% <*}"
 email="${uid#*<}"
 email="${email%>}"
 export GIT_COMMITTER_NAME="$name" GIT_COMMITTER_EMAIL="$email"
-export GNUPGHOME="$sign_home"
+# Bind GNUPGHOME to the operator home for this signing only. Hardware-backed
+# subkeys cannot be exported into a throwaway keyring.
+export GNUPGHOME="$SHELLSENTRY_GPG_HOMEDIR"
+# verbatim keeps the message bytes; the trailing newline is required so git
+# does not concatenate the PGP signature onto the last line of the message.
 git -c gpg.format=openpgp -c gpg.program=gpg tag -s -a --cleanup=verbatim \
-    -u "$SHELLSENTRY_PGP_KEY_ID" -m "shellsentry $tag" "$tag" HEAD
+    -u "$SHELLSENTRY_PGP_KEY_ID" -m "shellsentry $tag"$'\n' "$tag" HEAD
 unset GNUPGHOME
 "$root/scripts/verify-pinned-tag.sh"
 echo '[ok] signed tag is local only'

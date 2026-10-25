@@ -24,6 +24,10 @@ Semantic Versioning.
   `actions/checkout` and `actions/setup-go`. `download-artifact` is v7.0.0 to
   match `upload-artifact` v7. `scripts/test-workflow-action-pins.py` fails if
   a pin is reverted to a tag.
+- **Pin assertion does not SIGPIPE.** `make assert-tool-pins` takes the first
+  version line without piping through `head`, so extra output cannot exit 141
+  under `set -o pipefail`. `scripts/test-assert-tool-pins.sh` fails if the
+  piped-head path is restored.
 
 ### Added
 
@@ -33,6 +37,14 @@ Semantic Versioning.
   `make release-publish` re-downloads the draft, byte-compares it to local
   `SHA256SUMS`, then publishes. Tagging and publish scripts refuse
   `GITHUB_ACTIONS` and do not run in CI.
+
+### Changed
+
+- **Tag signing uses the operator GPG home.** `make release-tag` binds
+  `GNUPGHOME` to `SHELLSENTRY_GPG_HOMEDIR` and does not export secret keys
+  into a throwaway keyring, so hardware-backed subkeys can sign. Cleanup
+  never `gpgconf --kill`s the operator agent. Public-pin verification stays
+  on a disposable keyring.
 
 ## [0.1.7] - 2026-10-21
 

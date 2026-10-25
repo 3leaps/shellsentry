@@ -50,7 +50,11 @@ case "$SFETCH_BIN" in
         ;;
 esac
 
-SF_OUT="$("$SFETCH_BIN" --version 2>&1 | head -n1)"
+# Capture the full command output, then take the first line. Piping through
+# `head` under `set -o pipefail` exits 141 (SIGPIPE) when the tool writes more
+# than one line — a race that showed up on Linux arm64 CI.
+SF_OUT="$("$SFETCH_BIN" --version 2>&1)"
+SF_OUT="${SF_OUT%%$'\n'*}"
 if ! ./scripts/version-matches-pin.sh "$SF_OUT" "$SFETCH_PIN"; then
     echo "error: sfetch version mismatch (exact token)" >&2
     echo "  have: $SF_OUT" >&2
@@ -58,7 +62,8 @@ if ! ./scripts/version-matches-pin.sh "$SF_OUT" "$SFETCH_PIN"; then
     exit 1
 fi
 
-GN_OUT="$("$GONEAT_BIN" version 2>&1 | head -n1)"
+GN_OUT="$("$GONEAT_BIN" version 2>&1)"
+GN_OUT="${GN_OUT%%$'\n'*}"
 if ! ./scripts/version-matches-pin.sh "$GN_OUT" "$GONEAT_PIN"; then
     echo "error: goneat version mismatch (exact token)" >&2
     echo "  have: $GN_OUT" >&2
