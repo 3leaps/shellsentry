@@ -77,13 +77,13 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: schema-validate schema-meta sarif-validate precommit prepush govulncheck
 .PHONY: gosec gosec-high gosec-install test-gosec-pin test-release-workflow-draft test-workflow-action-pins
 .PHONY: release-download release-checksums release-verify-checksums release-sign
-.PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
+.PHONY: release-notes release-create-draft release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
 .PHONY: release-clean bootstrap-script verify-release-key
 .PHONY: release-preflight release-guard-tag-version release-prepare-tag-message
 .PHONY: release-tag release-push-tag release-verify-tag release-verify-remote-tag
 .PHONY: release-publish release-tag-tests require-release-tag
-.PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft
+.PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft test-release-create-draft
 .PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
 .PHONY: test-version-ldflags test-release-preflight test-release-guard-tag-version
 .PHONY: test-release-tag-operator test-release-prepare-tag-message test-release-tag-controls
@@ -413,8 +413,11 @@ test-install-anchor-select: ## Regression: installer pin-map anchor selection (u
 test-gosec-pin: ## Regression: gosec pin and fail-closed missing-binary guard
 	@./scripts/test-gosec-pin.sh
 
-test-release-workflow-draft: ## Regression: every release-writing action preserves draft state
+test-release-workflow-draft: ## Regression: tag workflow is read-only and artifacts-only
 	@python3 ./scripts/test-release-workflow-draft.py
+
+test-release-create-draft: ## Regression: draft GitHub release is created locally, never by CI
+	@./scripts/release-create-draft.test.sh
 
 test-workflow-action-pins: ## Regression: every workflow uses: is SHA-pinned
 	@python3 ./scripts/test-workflow-action-pins.py
@@ -488,6 +491,7 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-release-ci-hygiene
 	@$(MAKE) test-makefile-release-tag
 	@$(MAKE) test-upload-release-draft
+	@$(MAKE) test-release-create-draft
 	@$(MAKE) test-version-ldflags
 	@$(MAKE) test-release-preflight
 	@$(MAKE) test-release-guard-tag-version
@@ -569,6 +573,9 @@ release-verify-signatures: ## Verify minisign and PGP signatures on checksum man
 	SHELLSENTRY_MINISIGN_PUB=$(SHELLSENTRY_MINISIGN_PUB) SHELLSENTRY_GPG_HOMEDIR=$(SHELLSENTRY_GPG_HOMEDIR) ./scripts/verify-signatures.sh $(DIST_RELEASE)
 
 release-verify: release-verify-checksums release-verify-signatures release-verify-keys ## Full post-signing release verification
+
+release-create-draft: require-release-tag ## Open a draft GitHub release from locally staged packages
+	@./scripts/release-create-draft.sh "$(SHELLSENTRY_RELEASE_TAG)" "$(DIST_RELEASE)"
 
 release-upload: require-release-tag release-notes release-verify ## Upload assets (requires full verification chain)
 	./scripts/upload-release-assets.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
