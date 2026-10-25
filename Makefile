@@ -556,7 +556,9 @@ release-verify-minisign-pubkey: build ## Verify minisign public key matches embe
 		exit 1; \
 	fi
 
-release-verify-keys: release-verify-key ## Verify all exported public keys
+release-verify-keys: ## Verify committed anchors, then exported public keys
+	@./scripts/release-verify-committed-anchors.sh
+	@$(MAKE) release-verify-key
 	@if [ -f "$(DIST_RELEASE)/$(MINISIGN_PUB_NAME)" ]; then \
 		$(MAKE) release-verify-minisign-pubkey FILE=$(DIST_RELEASE)/$(MINISIGN_PUB_NAME); \
 	else \

@@ -215,5 +215,14 @@ if grep -n 'gpg --import configs/keys/' README.md; then
     fail "README must not import the GPG pin from configs/keys"
 fi
 pass "README gpg import uses docs/security"
+grep -q 'gpg --import docs/security/release-signing-keys.asc' docs/releases/v0.1.8.md ||
+    fail "v0.1.8 notes gpg import must use docs/security/release-signing-keys.asc"
+if grep -n 'gpg --import configs/keys/' docs/releases/v0.1.8.md; then
+    fail "v0.1.8 notes must not import the GPG pin from configs/keys"
+fi
+if grep -n 'gpg --import configs/keys/' RELEASE_NOTES.md; then
+    fail "RELEASE_NOTES.md must not import the GPG pin from configs/keys"
+fi
+pass "current release notes gpg import uses docs/security"
 
 echo "[ok] no pipe-to-shell install docs"

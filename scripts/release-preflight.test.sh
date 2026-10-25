@@ -17,8 +17,20 @@ expect_fail() {
 fixture="$scratch/repo"
 mkdir -p "$fixture/scripts" "$fixture/config/release" "$fixture/docs/security" \
 	"$fixture/docs/releases" "$fixture/keys"
-cp "$root/scripts/release-preflight.sh" "$fixture/scripts/"
-chmod +x "$fixture/scripts/release-preflight.sh"
+cp "$root/scripts/release-preflight.sh" "$root/scripts/release-decernor.sh" \
+	"$root/scripts/release-verify-committed-anchors.sh" "$fixture/scripts/"
+chmod +x "$fixture/scripts/"*.sh
+cat >"$scratch/decernor" <<'EOF'
+#!/usr/bin/env bash
+case "$1 ${2:-}" in
+  'version ') echo 'decernor 0.1.8' ;;
+  'version -e') printf 'Version:         0.1.8\nCommit:          testdata\nBuild Date:      testdata\nGo Version:      testdata\nGofulmen:        testdata\nCrucible:        testdata\n' ;;
+  'fingerprint verify') exit 0 ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$scratch/decernor"
+export SHELLSENTRY_DECERNOR_BIN="$scratch/decernor"
 git init -q -b main "$fixture"
 git -C "$fixture" config user.name fixture
 git -C "$fixture" config user.email fixture@example.invalid
@@ -47,7 +59,13 @@ pf="$fixture/scripts/release-preflight.sh"
 expect_fail env -u SHELLSENTRY_RELEASE_TAG -u RELEASE_TAG "$pf"
 grep -q 'SHELLSENTRY_RELEASE_TAG required' "$scratch/err"
 
-env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 "$pf" >/dev/null
+expect_fail env -u SHELLSENTRY_DECERNOR_BIN -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 "$pf"
+grep -q 'SHELLSENTRY_DECERNOR_BIN is required' "$scratch/err"
+
+expect_fail env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 SHELLSENTRY_DECERNOR_BIN=decernor "$pf"
+grep -q 'absolute executable regular file' "$scratch/err"
+
+env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 SHELLSENTRY_DECERNOR_BIN="$scratch/decernor" "$pf" >/dev/null
 
 printf 'dirty\n' >"$fixture/file"
 expect_fail env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 "$pf"

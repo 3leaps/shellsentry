@@ -53,6 +53,36 @@ minisign_key_id() {
 [ "$SHELLSENTRY_PGP_FPR_LEGACY" = "94BB7811D4AD49B2310E0C08FA0651DE91B828ED" ] || fail "legacy GPG fingerprint"
 pass "shipped trust constants match pinned values"
 
+# PDR-0008 §2.1: the installer pin is a literal, not an environment override.
+if grep -E 'SHELLSENTRY_MINISIGN_PUBKEY="\$\{SHELLSENTRY_MINISIGN_PUBKEY:-' "$INSTALLER"; then
+    fail "installer must not accept SHELLSENTRY_MINISIGN_PUBKEY from the environment"
+fi
+python3 - "$INSTALLER" <<'PY' || fail "env-override mutant was not distinguished"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+live = 'SHELLSENTRY_MINISIGN_PUBKEY="RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1"'
+old = 'SHELLSENTRY_MINISIGN_PUBKEY="${SHELLSENTRY_MINISIGN_PUBKEY:-RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1}"'
+if live not in text:
+    raise SystemExit('live installer is missing the committed minisign literal')
+if old in text:
+    raise SystemExit('live installer still accepts an environment override')
+mut = text.replace(live, old, 1)
+if old not in mut:
+    raise SystemExit('mutant did not restore the environment override')
+PY
+(
+    export SHELLSENTRY_MINISIGN_PUBKEY='RWTthisisnotthecommittedpinAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+    export SHELLSENTRY_PGP_FPR='0000000000000000000000000000000000000000'
+    # shellcheck disable=SC1090
+    . "$SRC_COPY"
+    [ "$SHELLSENTRY_MINISIGN_PUBKEY" = "RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1" ] ||
+        fail "environment must not override the committed minisign pin"
+    [ "$SHELLSENTRY_PGP_FPR" = "0CACA49B3119B6BC12B2CA11B9B485F294B9FE07" ] ||
+        fail "environment must not override the committed GPG pin"
+)
+pass "installer pins ignore environment overrides"
+
 # --- shipped selection: each tag selects exactly one generation ---
 expect_selection() {
     local tag="$1" gen="$2" key="$3" fpr="$4"

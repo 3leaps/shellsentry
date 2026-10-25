@@ -71,10 +71,6 @@ grep -q 'docs/security/shellsentry-minisign.pub' "$root/scripts/verify-pinned-ta
 	echo 'error: verify-pinned-tag.sh must read the minisign pin from the tagged commit' >&2
 	exit 1
 }
-grep -q 'release-decernor.sh' "$root/scripts/verify-pinned-tag.sh" || {
-	echo 'error: verify-pinned-tag.sh must use the designated Decernor checker' >&2
-	exit 1
-}
 echo 'PASS: committed pins match expected-fingerprints.txt'
 
 gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
@@ -103,9 +99,11 @@ printf 'untrusted comment: fixture minisign\nRWTfixturekeyblobAAAAAAAAAAAAAAAAAA
 	>"$fixture/docs/security/shellsentry-minisign.pub"
 printf 'gpg %s\nminisign %s\n' "$primary" "$(printf 'a%.0s' {1..64})" >"$fixture/keys/expected-fingerprints.txt"
 printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$fixture/keys/expected-fingerprints.ndjson"
-cat >"$scratch/decernor" <<'EOF'
+decernor_log="$scratch/decernor.log"
+cat >"$scratch/decernor" <<EOF
 #!/usr/bin/env bash
-case "$1 ${2:-}" in
+printf '%s\n' "\$*" >>'$decernor_log'
+case "\$1 \${2:-}" in
   'version ') echo 'decernor 0.1.8' ;;
   'version -e') printf 'Version:         0.1.8\nCommit:          testdata\nBuild Date:      testdata\nGo Version:      testdata\nGofulmen:        testdata\nCrucible:        testdata\n' ;;
   'fingerprint verify') exit 0 ;;
@@ -129,6 +127,63 @@ if ! (cd "$fixture" && ./scripts/verify-pinned-tag.sh); then
 	exit 1
 fi
 echo 'PASS: signed fixture tag verifies against committed pin'
+if ! python3 - "$decernor_log" <<'PY'
+from pathlib import Path
+import sys
+lines = Path(sys.argv[1]).read_text().splitlines()
+verify = [line for line in lines if line.startswith('fingerprint verify ')]
+if len(verify) != 1:
+    raise SystemExit(f'expected one fingerprint verify invocation, got {verify!r}')
+args = verify[0].split()
+need = ('--anchors', '--anchors-ndjson', '--gpg', '--minisign')
+for flag in need:
+    if flag not in args:
+        raise SystemExit(f'fingerprint verify missing {flag}: {verify[0]}')
+gpg = args[args.index('--gpg') + 1]
+mini = args[args.index('--minisign') + 1]
+if not gpg.endswith('release-signing-keys.asc'):
+    raise SystemExit(f'--gpg was not the tagged pin: {gpg}')
+if not mini.endswith('shellsentry-minisign.pub'):
+    raise SystemExit(f'--minisign was not the tagged pin: {mini}')
+PY
+then
+	echo 'error: tag verify did not invoke Decernor fingerprint verify with the tagged pins' >&2
+	exit 1
+fi
+echo 'PASS: tag verify invoked Decernor fingerprint verify with tagged pin arguments'
+
+if ! python3 - "$fixture/scripts/verify-pinned-tag.sh" "$scratch/verify-pinned-tag.no-decernor.sh" <<'PY'
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[1]).read_text()
+mut, n = re.subn(
+    r'"\$RELEASE_DECERNOR_BIN" fingerprint verify \\\n(?:\t.*\\\n)*\t--gpg "\$pin" --minisign "\$minisign_pin" >/dev/null \|\| die [^\n]+\n',
+    '',
+    text,
+    count=1,
+)
+if n != 1 or 'fingerprint verify' in mut:
+    raise SystemExit('mutant did not delete the tag-time Decernor check')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	echo 'error: tag-time Decernor check mutant was not distinguished' >&2
+	exit 1
+fi
+cp "$scratch/verify-pinned-tag.no-decernor.sh" "$fixture/scripts/verify-pinned-tag.sh"
+chmod +x "$fixture/scripts/verify-pinned-tag.sh"
+: >"$decernor_log"
+if ! (cd "$fixture" && ./scripts/verify-pinned-tag.sh); then
+	echo 'error: fixture tag must still gpg-verify after deleting the Decernor check' >&2
+	exit 1
+fi
+if grep -q '^fingerprint verify ' "$decernor_log"; then
+	echo 'error: deleting the tag-time Decernor check still recorded fingerprint verify' >&2
+	exit 1
+fi
+cp "$root/scripts/verify-pinned-tag.sh" "$fixture/scripts/verify-pinned-tag.sh"
+chmod +x "$fixture/scripts/verify-pinned-tag.sh"
+echo 'PASS: deleting the tag-time Decernor check is distinguished by invocation recording'
 
 # Revert-proof: tagging with the first GPG UID must be refused.
 git -C "$fixture" tag -d v0.0.0 >/dev/null

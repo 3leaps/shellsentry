@@ -47,13 +47,12 @@ resolve_release_decernor || die 'trusted Decernor identity/version check failed'
 	--anchors "$anchors" \
 	--anchors-ndjson "$anchors_ndjson" \
 	--gpg "$pin" --minisign "$minisign_pin" >/dev/null || die 'Decernor rejected committed pin and anchors'
+# The GPG primary comes from Decernor's anchor file, not a second fingerprint parse.
 primary="$(awk '$1=="gpg" {print $2}' "$anchors")"
 [[ "$primary" =~ ^[0-9A-F]{40}$ ]] || die 'primary anchor malformed'
 mkdir -m 700 "$keyring/home"
 GNUPGHOME="$keyring/home" gpg --batch --quiet --import "$pin" || die 'pin import failed'
 [[ "$(GNUPGHOME="$keyring/home" gpg --batch --with-colons --list-keys | awk -F: '$1=="pub" {count++} END {print count+0}')" == 1 ]] || die 'pin must hold exactly one primary key'
-pinned_primary="$(GNUPGHOME="$keyring/home" gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-[[ "$pinned_primary" == "$primary" ]] || die 'pin does not match primary anchor'
 expected_tagger="$(tr -d '\r' <"$identity")"
 expected_tagger="${expected_tagger%"${expected_tagger##*[![:space:]]}"}"
 [[ "$expected_tagger" == '3 Leaps Infosec Team <infosec@3leaps.net>' ]] || die 'committed tagger identity is not the infosec team'

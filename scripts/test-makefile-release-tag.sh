@@ -184,6 +184,27 @@ grep -q 'SHELLSENTRY_RELEASE_TAG required' "$scratch/preflight-missing.out" ||
 	fail "release-preflight missing-tag refusal (log: $(cat "$scratch/preflight-missing.out"))"
 pass "make release-preflight requires SHELLSENTRY_RELEASE_TAG"
 
+grep -q 'release-verify-committed-anchors.sh' "$ROOT/scripts/release-preflight.sh" ||
+	fail "release-preflight.sh must run release-verify-committed-anchors.sh"
+grep -q 'resolve_release_decernor' "$ROOT/scripts/release-preflight.sh" ||
+	fail "release-preflight.sh must bind SHELLSENTRY_DECERNOR_BIN"
+if env -u SHELLSENTRY_DECERNOR_BIN -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG="v${file_version}" \
+	make -s release-preflight >"$scratch/pf-dec.out" 2>&1; then
+	fail "make release-preflight without SHELLSENTRY_DECERNOR_BIN must be refused"
+fi
+grep -q 'SHELLSENTRY_DECERNOR_BIN is required' "$scratch/pf-dec.out" ||
+	fail "preflight Decernor refusal (log: $(cat "$scratch/pf-dec.out"))"
+pass "make release-preflight fails closed without SHELLSENTRY_DECERNOR_BIN"
+
+grep -E '^release-verify-keys:' -A6 Makefile | grep -q 'release-verify-committed-anchors.sh' ||
+	fail "release-verify-keys must run release-verify-committed-anchors.sh"
+if env -u SHELLSENTRY_DECERNOR_BIN -u RELEASE_TAG make -s release-verify-keys >"$scratch/vk-dec.out" 2>&1; then
+	fail "make release-verify-keys without SHELLSENTRY_DECERNOR_BIN must be refused"
+fi
+grep -q 'SHELLSENTRY_DECERNOR_BIN is required' "$scratch/vk-dec.out" ||
+	fail "release-verify-keys Decernor refusal (log: $(cat "$scratch/vk-dec.out"))"
+pass "make release-verify-keys fails closed without SHELLSENTRY_DECERNOR_BIN"
+
 python3 - "$ROOT/Makefile" <<'PY' || fail "release-tag-tests must stay macOS-safe (no linux_amd64 Decernor download)"
 from pathlib import Path
 import re, sys
