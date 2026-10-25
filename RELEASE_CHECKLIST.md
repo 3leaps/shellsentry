@@ -32,14 +32,16 @@ Bare `RELEASE_TAG` is not accepted.
   ```bash
   export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
   export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
-  export SHELLSENTRY_GPG_HOMEDIR=/path/to/isolated/gpg/homedir   # not ~/.gnupg, not inside the repo
+  export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; not ~/.gnupg; mode 0700
   make release-tag
   ```
 
-  `make release-tag` imports the signing subkey into a throwaway GNUPGHOME,
-  creates an annotated signed tag, and verifies it against the public pin
-  committed in the tagged commit (`docs/security/release-signing-keys.asc` and
-  `keys/expected-fingerprints.txt`). Re-check with `make release-verify-tag`.
+  Tag signing uses `SHELLSENTRY_GPG_HOMEDIR` and its existing agent/smartcard
+  setup directly; it does not export secret keys. The primary secret key may
+  remain offline. Public verification uses only the committed pin in a
+  temporary keyring (`docs/security/release-signing-keys.asc` and
+  `keys/expected-fingerprints.txt`), separate from the operator home.
+  Re-check with `make release-verify-tag`.
 
 - [ ] Push the already-signed tag: `git push origin "$SHELLSENTRY_RELEASE_TAG"`
 - [ ] Wait for GitHub Actions release workflow to complete
@@ -57,7 +59,7 @@ export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
 export SHELLSENTRY_MINISIGN_KEY=/path/to/shellsentry.key
 export SHELLSENTRY_MINISIGN_PUB=/path/to/shellsentry.pub
 export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
-export SHELLSENTRY_GPG_HOMEDIR=/path/to/isolated/gpg/homedir
+export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; not ~/.gnupg
 ```
 
 ### Steps

@@ -34,6 +34,14 @@ Semantic Versioning.
   `SHA256SUMS`, then publishes. Tagging and publish scripts refuse
   `GITHUB_ACTIONS` and do not run in CI.
 
+### Changed
+
+- **Tag signing uses the operator GPG home.** `make release-tag` binds
+  `GNUPGHOME` to `SHELLSENTRY_GPG_HOMEDIR` and does not export secret keys
+  into a throwaway keyring, so hardware-backed subkeys can sign. Cleanup
+  never `gpgconf --kill`s the operator agent. Public-pin verification stays
+  on a disposable keyring.
+
 ## [0.1.7] - 2026-10-21
 
 ### Security

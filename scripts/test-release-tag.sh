@@ -21,6 +21,11 @@ grep -q 'tag -s -a' "$TAG_SH" || fail "release-tag.sh must create a signed annot
 if grep -nE 'git[[:space:]]+push\b' "$TAG_SH"; then
     fail "release-tag.sh must not push"
 fi
+if grep -nE -- '--export-secret-(keys|subkeys)' "$TAG_SH"; then
+    fail "release-tag.sh must not export secret keys"
+fi
+grep -Fq 'export GNUPGHOME="$SHELLSENTRY_GPG_HOMEDIR"' "$TAG_SH" ||
+    fail "release-tag.sh must bind GNUPGHOME to the operator home"
 pass "release-tag is signed, local, and refuses CI"
 
 # Mutant: unsigned tag or a push must be caught.

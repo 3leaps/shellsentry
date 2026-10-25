@@ -82,7 +82,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-clean bootstrap-script verify-release-key
 .PHONY: release-tag release-verify-tag release-publish release-tag-tests require-release-tag
 .PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft
-.PHONY: test-release-tag test-release-publish test-verify-pinned-tag
+.PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
 .PHONY: dogfood assert-no-pipe-install-sfetch check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-bootstrap-negative-controls
@@ -407,6 +407,9 @@ test-upload-release-draft: ## Regression: release-upload stays a draft
 test-release-tag: ## Regression: signed tag stays local and refuses GitHub Actions
 	@./scripts/test-release-tag.sh
 
+test-release-tag-smartcard: ## Regression: tag signing uses operator GPG home (no secret export)
+	@./scripts/test-release-tag-smartcard.sh
+
 test-release-publish: ## Regression: publish promotes only a byte-verified draft
 	@./scripts/test-release-publish.sh
 
@@ -420,6 +423,7 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-makefile-release-tag
 	@$(MAKE) test-upload-release-draft
 	@$(MAKE) test-release-tag
+	@$(MAKE) test-release-tag-smartcard
 	@$(MAKE) test-release-publish
 	@$(MAKE) test-verify-pinned-tag
 	@echo "[ok] Release tag tooling tests passed"
