@@ -19,6 +19,11 @@ Semantic Versioning.
   v3.0.3 by commit SHA. The `build` job is `contents: read` and only uploads
   artifacts; a separate `upload` job with `contents: write` attaches them to
   the draft.
+- **Workflow actions are SHA-pinned.** Every `uses:` in `.github/workflows`
+  is a 40-character commit SHA with a version comment, including
+  `actions/checkout` and `actions/setup-go`. `download-artifact` is v7.0.0 to
+  match `upload-artifact` v7. `scripts/test-workflow-action-pins.py` fails if
+  a pin is reverted to a tag.
 
 ### Added
 

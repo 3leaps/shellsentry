@@ -75,7 +75,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 
 .PHONY: all help build test clean install fmt fmt-check lint check-all version tools prereqs bootstrap bootstrap-force build-all assess
 .PHONY: schema-validate schema-meta sarif-validate precommit prepush govulncheck
-.PHONY: gosec gosec-high gosec-install test-gosec-pin test-release-workflow-draft
+.PHONY: gosec gosec-high gosec-install test-gosec-pin test-release-workflow-draft test-workflow-action-pins
 .PHONY: release-download release-checksums release-verify-checksums release-sign
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
@@ -392,6 +392,9 @@ test-gosec-pin: ## Regression: gosec pin and fail-closed missing-binary guard
 test-release-workflow-draft: ## Regression: every release-writing action preserves draft state
 	@python3 ./scripts/test-release-workflow-draft.py
 
+test-workflow-action-pins: ## Regression: every workflow uses: is SHA-pinned
+	@python3 ./scripts/test-workflow-action-pins.py
+
 test-release-ci-hygiene: ## Regression: workflows never invoke signing or publish scripts
 	@./scripts/test-release-ci-hygiene.sh
 
@@ -411,6 +414,7 @@ test-verify-pinned-tag: ## Regression: signed tag verifies against the committed
 	@./scripts/verify-pinned-tag.test.sh
 
 release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the default homedir)
+	@$(MAKE) test-workflow-action-pins
 	@$(MAKE) test-release-workflow-draft
 	@$(MAKE) test-release-ci-hygiene
 	@$(MAKE) test-makefile-release-tag
