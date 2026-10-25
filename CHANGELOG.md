@@ -11,7 +11,13 @@ Semantic Versioning.
 
 - **Pinned gosec in CI.** `gosec` is pinned to v2.29.0 (`go install` into
   `bin/`). `make gosec-high` fails closed if `gosec` is missing, instead of
-  exiting 127 when goneat cooling skips a newer `@latest` build.
+  exiting 127 when goneat cooling skips a newer `@latest` build. It also
+  asserts the binary on PATH matches `GOSEC_VERSION`.
+- **Release workflow cannot publish.** Tag-push CI creates a draft GitHub
+  release (`draft: true` on every `action-gh-release` step). Both uses are
+  pinned to `softprops/action-gh-release` v3.0.3 by commit SHA. Workflow
+  permissions are `contents: read`; only the release-writing jobs take
+  `contents: write`.
 
 ## [0.1.7] - 2026-10-21
 
