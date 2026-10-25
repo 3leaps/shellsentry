@@ -57,7 +57,7 @@ pass "stale prefixed alias and git describe fallback are distinguished"
 for target in release-preflight release-guard-tag-version release-prepare-tag-message release-tag \
 	release-push-tag release-verify-tag release-verify-remote-tag \
 	release-publish release-download release-notes release-sign release-create-draft release-upload \
-	release-export-key release-export-minisign-key release-export-keys; do
+	release-export-key release-export-minisign-key release-export-keys release-verify-signatures; do
 	grep -E "^${target}: require-release-tag" Makefile >/dev/null ||
 		fail "$target must depend on require-release-tag first"
 done
@@ -224,6 +224,8 @@ if 'test-release-decernor' not in body or 'test-release-stage-tagged-pubkeys' no
     raise SystemExit('release-tag-tests must run ceremony binding and tagged-blob staging tests')
 if 'test-release-verify-staged-keys' not in body:
     raise SystemExit('release-tag-tests must run test-release-verify-staged-keys')
+if 'test-verify-signatures' not in body:
+    raise SystemExit('release-tag-tests must run test-verify-signatures')
 if 'test-release-create-draft' not in body:
     raise SystemExit('release-tag-tests must run test-release-create-draft')
 if 'ci-install-decernor' in body or 'test-release-verify-committed-anchors' in body:

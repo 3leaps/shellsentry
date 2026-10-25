@@ -72,7 +72,6 @@ Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
 ```bash
 export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
 export SHELLSENTRY_MINISIGN_KEY=/path/to/shellsentry.key
-export SHELLSENTRY_MINISIGN_PUB=/path/to/shellsentry.pub
 export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
 export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; not ~/.gnupg
 ```
@@ -126,6 +125,10 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    ```bash
    make release-verify-signatures
    ```
+
+   Reads the minisign and GPG public keys from the tagged commit only.
+   Both signatures must verify on both manifests. Env-named key files
+   are not used.
 
 7. **Create the draft GitHub release** from the staged packages
 
