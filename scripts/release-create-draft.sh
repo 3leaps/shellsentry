@@ -188,7 +188,9 @@ PY
 	[[ -s "$bin" ]] || die "no shellsentry binary in $archive"
 	# Confirm it is a Go binary. Stripped builds (-s -w) do not record
 	# -X main.version= / -X main.gitCommit= in `go version -m`, so the
-	# injected values are matched as NUL-terminated strings.
+	# injected values are matched as right-NUL-terminated strings.
+	# Mach-O can place a non-NUL marker immediately before gitCommit;
+	# requiring a leading NUL rejects real darwin archives.
 	go version -m "$bin" >/dev/null 2>&1 || die "$archive is not a Go binary"
 	if ! python3 - "$bin" "$version" "$short" <<'PY'
 from pathlib import Path
@@ -204,9 +206,8 @@ def has_injected(value: str) -> bool:
         i = data.find(needle, start)
         if i < 0:
             return False
-        left = i == 0 or data[i - 1] == 0
         right = i + len(needle) == len(data) or data[i + len(needle)] == 0
-        if left and right:
+        if right:
             return True
         start = i + 1
 

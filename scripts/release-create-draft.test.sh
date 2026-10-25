@@ -61,6 +61,11 @@ grep -q 'minisign -V' "$script" || fail 'release-create-draft.sh must verify min
 grep -q 'VALIDSIG' "$script" || fail 'release-create-draft.sh must verify GPG signatures'
 grep -q 'main.version=' "$script" || fail 'release-create-draft.sh must bind archives to the tag version'
 grep -q 'main.gitCommit=' "$script" || fail 'release-create-draft.sh must bind archives to the tagged commit'
+if grep -Fq 'left = i == 0 or data[i - 1] == 0' "$script"; then
+	fail 'archive bind must not require a leading NUL (Mach-O gitCommit has none)'
+fi
+grep -Fq 'data[i + len(needle)] == 0' "$script" ||
+	fail 'archive bind must require a trailing NUL so a short hash is not a vcs.revision prefix'
 grep -q 'mktemp -d /tmp/shs-cd.XXXXXX' "$script" || fail 'create-draft work dir must be a short /tmp path'
 if grep -nE 'mktemp -d "\$\{TMPDIR' "$script"; then
 	fail 'create-draft GPG homes must not be created under TMPDIR'
@@ -184,12 +189,17 @@ mkdir -p "$scratch/bin"
 (cd "$root" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=deadbee" \
 	-o "$scratch/bin/wrong-commit" .)
+# Real darwin Mach-O: the -X gitCommit string is not leading-NUL-terminated.
+(cd "$root" && GOOS=darwin GOARCH=arm64 go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${short}" \
+	-o "$scratch/bin/shellsentry-darwin" .)
+[[ -s "$scratch/bin/shellsentry-darwin" ]] || fail 'darwin fixture binary missing'
 
 pack_from() {
-	local binary="$1" dest="$2"
+	local binary="$1" dest="$2" darwin="${3:-$1}"
 	rm -rf "$dest"
 	mkdir -p "$dest"
-	python3 - "$binary" "$dest" "$root/scripts/install-shellsentry.sh" <<'PY'
+	python3 - "$binary" "$dest" "$root/scripts/install-shellsentry.sh" "$darwin" <<'PY'
 import hashlib
 import io
 import pathlib
@@ -200,16 +210,21 @@ import zipfile
 binary = pathlib.Path(sys.argv[1])
 dest = pathlib.Path(sys.argv[2])
 installer_src = pathlib.Path(sys.argv[3])
+darwin_bin = pathlib.Path(sys.argv[4])
 payload = binary.read_bytes()
+darwin_payload = darwin_bin.read_bytes()
 for name in (
     "shellsentry_linux_amd64.tar.gz",
     "shellsentry_linux_arm64.tar.gz",
-    "shellsentry_darwin_arm64.tar.gz",
 ):
     with tarfile.open(dest / name, "w:gz") as tf:
         info = tarfile.TarInfo("shellsentry")
         info.size = len(payload)
         tf.addfile(info, io.BytesIO(payload))
+with tarfile.open(dest / "shellsentry_darwin_arm64.tar.gz", "w:gz") as tf:
+    info = tarfile.TarInfo("shellsentry")
+    info.size = len(darwin_payload)
+    tf.addfile(info, io.BytesIO(darwin_payload))
 for name in (
     "shellsentry_windows_amd64.zip",
     "shellsentry_windows_arm64.zip",
@@ -242,7 +257,7 @@ sign_dir() {
 	gpg --batch --yes --armor --local-user "$subkey!" --detach-sign -o "$dest/SHA512SUMS.asc" "$dest/SHA512SUMS"
 }
 
-pack_from "$scratch/bin/shellsentry" "$scratch/dist"
+pack_from "$scratch/bin/shellsentry" "$scratch/dist" "$scratch/bin/shellsentry-darwin"
 sign_dir "$scratch/dist"
 
 mkdir -p "$scratch/bin-path"
