@@ -86,10 +86,12 @@ fi
 pass 'positive tag-anchor fixture verifies'
 
 other="$scratch/other"
-git clone -q "$scratch/origin.git" "$other"
+git clone -q -b main "$scratch/origin.git" "$other"
+git -C "$other" config user.name fixture
+git -C "$other" config user.email fixture@example.invalid
 printf 'other\n' >"$other/other"
 git -C "$other" add other
-git -C "$other" -c user.name=x -c user.email=x@x commit -qm other
+git -C "$other" commit -qm other
 git -C "$other" tag -a v9.9.9 -m other
 wrong_object="$(git -C "$other" rev-parse refs/tags/v9.9.9)"
 git -C "$other" push -q origin "refs/tags/v9.9.9:refs/tags/v1.2.3" --force
@@ -116,6 +118,8 @@ pass 'GitHub unverified and non-valid tags are refused'
 # Attacker commit: own keys and own signed/annotated tag, not on origin/main.
 attack="$scratch/attack"
 git clone -q -b main "$scratch/origin.git" "$attack"
+git -C "$attack" config user.name atk
+git -C "$attack" config user.email atk@example.invalid
 mkdir -p "$attack/scripts" "$attack/docs/security" "$attack/keys"
 cp "$script" "$attack/scripts/"
 chmod +x "$attack/scripts/"*.sh
