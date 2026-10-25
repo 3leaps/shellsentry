@@ -200,6 +200,11 @@ pass "make release-preflight fails closed without SHELLSENTRY_DECERNOR_BIN"
 
 grep -E '^release-verify-keys:' -A6 Makefile | grep -q 'release-verify-committed-anchors.sh' ||
 	fail "release-verify-keys must run release-verify-committed-anchors.sh"
+grep -E '^release-verify-keys:' -A6 Makefile | grep -q 'release-verify-staged-keys.sh' ||
+	fail "release-verify-keys must run release-verify-staged-keys.sh"
+if grep -E '^release-verify-keys:' -A20 Makefile | grep -q '\[skip\] No minisign'; then
+	fail "release-verify-keys must not skip a missing staged minisign key"
+fi
 if env -u SHELLSENTRY_DECERNOR_BIN -u RELEASE_TAG make -s release-verify-keys >"$scratch/vk-dec.out" 2>&1; then
 	fail "make release-verify-keys without SHELLSENTRY_DECERNOR_BIN must be refused"
 fi
@@ -217,6 +222,8 @@ if not m:
 body = m.group(0)
 if 'test-release-decernor' not in body or 'test-release-stage-tagged-pubkeys' not in body:
     raise SystemExit('release-tag-tests must run ceremony binding and tagged-blob staging tests')
+if 'test-release-verify-staged-keys' not in body:
+    raise SystemExit('release-tag-tests must run test-release-verify-staged-keys')
 if 'test-release-create-draft' not in body:
     raise SystemExit('release-tag-tests must run test-release-create-draft')
 if 'ci-install-decernor' in body or 'test-release-verify-committed-anchors' in body:
