@@ -9,7 +9,8 @@ This document walks maintainers through the signed-tag, build, sign, and publish
 Signing and publish scripts run on the maintainer's machine only. They refuse
 `GITHUB_ACTIONS`. CI builds unsigned archives and uploads them as workflow
 artifacts; it never tags, signs, creates a GitHub Release, or publishes. The
-maintainer opens the draft locally with `make release-create-draft`.
+maintainer signs the manifests, then opens the draft locally with
+`make release-create-draft`.
 
 For v0.1.8, `VERSION`, `CHANGELOG.md`, `RELEASE_NOTES.md`, and
 `docs/releases/v0.1.8.md` are already on `main`. Start at the signed-tag step
@@ -66,12 +67,11 @@ Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
   - CI never creates a GitHub Release and never requests `contents: write`
   - A green tag run is a consistency signal, not release authorization
 
-## 2. Stage packages, open draft, and sign (local machine)
+## 2. Stage packages, sign, then open the draft (local machine)
 
 ```bash
 export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
 export SHELLSENTRY_MINISIGN_KEY=/path/to/shellsentry.key
-export SHELLSENTRY_MINISIGN_PUB=/path/to/shellsentry.pub
 export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
 export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; not ~/.gnupg
 ```
@@ -111,28 +111,43 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    make release-verify-checksums
    ```
 
-5. **Create the draft GitHub release** from the staged packages
+5. **Sign checksum manifests** with minisign + PGP
+
+   ```bash
+   make release-sign
+   ```
+
+   Produces: `SHA256SUMS`, `SHA512SUMS` plus `.minisig`/`.asc`. Signatures
+   must exist before the draft is opened.
+
+6. **Verify signatures**
+
+   ```bash
+   make release-verify-signatures
+   ```
+
+   Reads the minisign and GPG public keys from the tagged commit only.
+   Both signatures must verify on both manifests. Env-named key files
+   are not used.
+
+7. **Create the draft GitHub release** from the staged packages
 
    ```bash
    make release-create-draft
    ```
 
    Runs `gh release create --verify-tag --draft`. Refuses GitHub Actions
-   and refuses if a release for the tag already exists.
-
-6. **Sign checksum manifests** with minisign + PGP
-
-   ```bash
-   make release-sign
-   ```
-
-   Produces: `SHA256SUMS`, `SHA512SUMS` plus `.minisig`/`.asc`
-
-7. **Verify signatures**
-
-   ```bash
-   make release-verify-signatures
-   ```
+   and refuses if a release for the tag already exists. Before trusting
+   the tag, confirms the local tag object equals origin, GitHub reports
+   it verified/valid, the tagged commit is an ancestor of `origin/main`,
+   and identity files are byte-identical to `origin/main`. Checks that
+   both manifests list exactly the staged archives with matching hashes,
+   verifies minisign and GPG signatures with the keys from the tagged
+   commit, binds each archive via `go version -m` (`vcs.revision` equals
+   the tagged commit, `vcs.modified` is false) plus delimited ldflag
+   version strings, and reads release notes from the tagged commit
+   (`git cat-file blob <commit>:docs/releases/<tag>.md`), not the
+   working tree.
 
 8. **Export public keys**
 
@@ -146,6 +161,12 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    make release-verify-keys
    ```
 
+   Requires both staged public keys and `SHELLSENTRY_RELEASE_TAG`.
+   Decernor checks them against the fingerprint anchors in the tagged
+   commit (PDR-0008 §2.1); the primary fingerprint, signing-subkey id,
+   and minisign blob are compared explicitly. Working-tree identity
+   files are not used as the pin.
+
    Or run all verification in one step:
 
    ```bash
@@ -158,7 +179,7 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
     make release-notes
     ```
 
-11. **Upload signatures and keys** (draft is preserved)
+11. **Upload remaining keys** (draft is preserved)
 
     ```bash
     make release-upload
