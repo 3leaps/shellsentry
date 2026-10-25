@@ -31,8 +31,10 @@ committed() {
 }
 pin="$keyring/release-signing-keys.asc"
 anchors="$keyring/expected-fingerprints.txt"
+identity="$keyring/tagger-identity.txt"
 committed docs/security/release-signing-keys.asc "$pin"
 committed keys/expected-fingerprints.txt "$anchors"
+committed config/release/tagger-identity.txt "$identity"
 primary="$(awk '$1=="gpg" {print $2}' "$anchors")"
 [[ "$primary" =~ ^[0-9A-F]{40}$ ]] || die 'primary anchor malformed'
 mkdir -m 700 "$keyring/home"
@@ -40,9 +42,11 @@ GNUPGHOME="$keyring/home" gpg --batch --quiet --import "$pin" || die 'pin import
 [[ "$(GNUPGHOME="$keyring/home" gpg --batch --with-colons --list-keys | awk -F: '$1=="pub" {count++} END {print count+0}')" == 1 ]] || die 'pin must hold exactly one primary key'
 pinned_primary="$(GNUPGHOME="$keyring/home" gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
 [[ "$pinned_primary" == "$primary" ]] || die 'pin does not match primary anchor'
-uid="$(GNUPGHOME="$keyring/home" gpg --batch --with-colons --list-keys | awk -F: '$1=="uid" {print $10;exit}')"
+expected_tagger="$(tr -d '\r' <"$identity")"
+expected_tagger="${expected_tagger%"${expected_tagger##*[![:space:]]}"}"
+[[ "$expected_tagger" == '3 Leaps Infosec Team <infosec@3leaps.net>' ]] || die 'committed tagger identity is not the infosec team'
 tagger="$(git cat-file tag "$object" | sed -n 's/^tagger \(.*\) [0-9][0-9]* [+-][0-9][0-9][0-9][0-9]$/\1/p' | head -1)"
-[[ -n "$uid" && "$tagger" == "$uid" ]] || die 'tagger identity must match the committed pin uid'
+[[ -n "$tagger" && "$tagger" == "$expected_tagger" ]] || die 'tagger identity must match config/release/tagger-identity.txt'
 signing_subkeys="$(GNUPGHOME="$keyring/home" gpg --batch --with-colons --with-subkey-fingerprint --list-keys |
     awk -F: '$1=="sub" {s=1; cap=$12; next} s && $1=="fpr" {if (cap ~ /s/) print $10; s=0}')"
 [[ -n "$signing_subkeys" && "$(printf '%s\n' "$signing_subkeys" | wc -l | tr -d ' ')" == 1 ]] ||

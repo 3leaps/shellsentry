@@ -81,9 +81,14 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
 .PHONY: release-clean bootstrap-script verify-release-key
-.PHONY: release-tag release-verify-tag release-publish release-tag-tests require-release-tag
+.PHONY: release-preflight release-guard-tag-version release-prepare-tag-message
+.PHONY: release-tag release-push-tag release-verify-tag release-verify-remote-tag
+.PHONY: release-publish release-tag-tests require-release-tag
 .PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft
 .PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
+.PHONY: test-version-ldflags test-release-preflight test-release-guard-tag-version
+.PHONY: test-release-tag-operator test-release-prepare-tag-message test-release-tag-controls
+.PHONY: test-release-verify-remote-tag
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
 .PHONY: dogfood assert-no-pipe-install-sfetch test-no-pipe-to-shell-docs check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-assert-tool-pins test-bootstrap-negative-controls
@@ -337,11 +342,26 @@ endef
 require-release-tag:
 	$(call require_shellsentry_release_tag)
 
+release-preflight: ## Verify clean-tree pre-tag requirements (does not tag)
+	@./scripts/release-preflight.sh
+
+release-guard-tag-version: require-release-tag ## Validate the canonical SHELLSENTRY_RELEASE_TAG
+	@./scripts/release-guard-tag-version.sh
+
+release-prepare-tag-message: require-release-tag ## Prepare the external per-cut tag message (maintainer)
+	@./scripts/release-tag-operator.sh prepare-message
+
 release-tag: require-release-tag ## Maintainer-only: create and verify a local signed version tag (no push)
-	@./scripts/release-tag.sh
+	@./scripts/release-tag-operator.sh local-tag
+
+release-push-tag: require-release-tag ## Maintainer-only: publish and verify the signed version tag
+	@./scripts/release-tag-operator.sh remote-push
 
 release-verify-tag: require-release-tag ## Verify the tag using only the committed public pin
 	@./scripts/verify-pinned-tag.sh
+
+release-verify-remote-tag: require-release-tag ## Compare local and remote tag objects and GitHub verification
+	@./scripts/release-verify-remote-tag.sh
 
 release-publish: require-release-tag ## Maintainer-only: byte-verify draft assets, then promote
 	@./scripts/release-publish.sh "$(SHELLSENTRY_RELEASE_TAG)" "$(DIST_RELEASE)"
@@ -406,6 +426,27 @@ test-makefile-release-tag: ## Regression: Makefile refuses bare RELEASE_TAG (not
 test-upload-release-draft: ## Regression: release-upload stays a draft
 	@./scripts/test-upload-release-draft.sh
 
+test-version-ldflags: ## Regression: LDFLAGS-injected version outside the repo
+	@./scripts/test-version-ldflags.sh
+
+test-release-preflight: ## Regression: preflight refuses a dirty tree and missing inputs
+	@./scripts/release-preflight.test.sh
+
+test-release-guard-tag-version: ## Regression: SHELLSENTRY_RELEASE_TAG guard
+	@./scripts/release-guard-tag-version.test.sh
+
+test-release-tag-operator: ## Regression: operator loader and dispatch
+	@./scripts/release-tag-operator.test.sh
+
+test-release-prepare-tag-message: ## Regression: external tag message preparation
+	@./scripts/release-prepare-tag-message.test.sh
+
+test-release-tag-controls: ## Regression: tag identity, message, and ruleset controls
+	@./scripts/release-tag-controls.test.sh
+
+test-release-verify-remote-tag: ## Regression: remote tag object and GitHub verification
+	@./scripts/release-verify-remote-tag.test.sh
+
 test-release-tag: ## Regression: signed tag stays local and refuses GitHub Actions
 	@./scripts/test-release-tag.sh
 
@@ -424,6 +465,13 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-release-ci-hygiene
 	@$(MAKE) test-makefile-release-tag
 	@$(MAKE) test-upload-release-draft
+	@$(MAKE) test-version-ldflags
+	@$(MAKE) test-release-preflight
+	@$(MAKE) test-release-guard-tag-version
+	@$(MAKE) test-release-tag-operator
+	@$(MAKE) test-release-prepare-tag-message
+	@$(MAKE) test-release-tag-controls
+	@$(MAKE) test-release-verify-remote-tag
 	@$(MAKE) test-release-tag
 	@$(MAKE) test-release-tag-smartcard
 	@$(MAKE) test-release-publish

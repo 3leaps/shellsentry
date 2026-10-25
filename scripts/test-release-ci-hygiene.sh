@@ -14,10 +14,10 @@ pass() { echo "PASS: $*"; }
 WF_DIR=".github/workflows"
 [[ -d "$WF_DIR" ]] || fail "workflows directory missing"
 
-if grep -nE 'make[[:space:]]+(release-tag|release-publish|release-sign|release-upload)\b' "$WF_DIR"/*; then
+if grep -nE 'make[[:space:]]+(release-tag|release-push-tag|release-publish|release-sign|release-upload)\b' "$WF_DIR"/*; then
     fail "workflows must not invoke maintainer signing or publish targets"
 fi
-if grep -nE 'scripts/(release-tag|release-publish|sign-release-assets|upload-release-assets)\.sh' "$WF_DIR"/*; then
+if grep -nE 'scripts/(release-tag|release-push-tag|release-publish|sign-release-assets|upload-release-assets)\.sh' "$WF_DIR"/*; then
     fail "workflows must not invoke maintainer signing or publish scripts"
 fi
 pass "workflows do not invoke release-tag/publish/sign/upload"

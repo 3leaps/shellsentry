@@ -14,13 +14,22 @@ For v0.1.8, `VERSION`, `CHANGELOG.md`, `RELEASE_NOTES.md`, and
 `docs/releases/v0.1.8.md` are already on `main`. Start at the signed-tag step
 below. Do not retag or bump `VERSION` again.
 
-Set the canonical tag (must equal `v$(cat VERSION)`):
+Set the canonical tag (must equal `v$(cat VERSION)`). Bare `RELEASE_TAG` is
+not accepted from the environment or the command line.
 
 ```bash
 export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
+export SHELLSENTRY_TAG_MESSAGE_DIR="$HOME/devsecops/releases/github/3leaps/shellsentry/$SHELLSENTRY_RELEASE_TAG"
+export SHELLSENTRY_TAGGER_NAME='3 Leaps Infosec Team'
+export SHELLSENTRY_TAGGER_EMAIL='infosec@3leaps.net'
+export SHELLSENTRY_GPG_SIGNING_FINGERPRINT=<40-hex-primary>
+export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
+export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; not ~/.gnupg; mode 0700
 ```
 
-Bare `RELEASE_TAG` is not accepted.
+The tagger string must equal `config/release/tagger-identity.txt`
+(`3 Leaps Infosec Team <infosec@3leaps.net>`), not the first GPG UID.
+Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
 
 ## 1. Prepare & signed tag (local)
 
@@ -31,14 +40,9 @@ Bare `RELEASE_TAG` is not accepted.
 - [ ] Create `docs/releases/vX.Y.Z.md`
 - [ ] Commit: `git add -A && git commit -m "release: prepare vX.Y.Z"`
 - [ ] Push `main`
-- [ ] Create the signed annotated tag locally (does not push):
-
-  ```bash
-  export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
-  export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
-  export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; not ~/.gnupg; mode 0700
-  make release-tag
-  ```
+- [ ] Run the pre-tag gate: `make release-preflight`
+- [ ] Prepare the public tag message (creates `$SHELLSENTRY_TAG_MESSAGE_DIR/message.txt` if missing; does not overwrite): `make release-prepare-tag-message`
+- [ ] Create the signed annotated tag locally (does not push): `make release-tag`
 
   Tag signing uses `SHELLSENTRY_GPG_HOMEDIR` and its existing agent/smartcard
   setup directly; it does not export secret keys. The primary secret key may
@@ -47,7 +51,8 @@ Bare `RELEASE_TAG` is not accepted.
   `keys/expected-fingerprints.txt`), separate from the operator home.
   Re-check with `make release-verify-tag`.
 
-- [ ] Push the already-signed tag: `git push origin "$SHELLSENTRY_RELEASE_TAG"`
+- [ ] Push only the tag and confirm it is unchanged: `make release-push-tag`
+- [ ] Confirm the remote object equals the local one and GitHub reports Verified with reason `valid`: `make release-verify-remote-tag`
 - [ ] Wait for GitHub Actions release workflow to complete
   - CI validates VERSION file matches tag
   - The `build` job (contents: read) builds unsigned archives for the five

@@ -26,6 +26,11 @@ if grep -nE -- '--export-secret-(keys|subkeys)' "$TAG_SH"; then
 fi
 grep -Fq 'export GNUPGHOME="$SHELLSENTRY_GPG_HOMEDIR"' "$TAG_SH" ||
     fail "release-tag.sh must bind GNUPGHOME to the operator home"
+grep -Fq 'GIT_COMMITTER_NAME="$SHELLSENTRY_TAGGER_NAME"' "$TAG_SH" ||
+    fail "release-tag.sh must tag as SHELLSENTRY_TAGGER_NAME, not the first GPG UID"
+if grep -nE 'uid="\$\(gpg' "$TAG_SH"; then
+    fail "release-tag.sh must not take the tagger from the first GPG UID"
+fi
 pass "release-tag is signed, local, and refuses CI"
 
 # Mutant: unsigned tag or a push must be caught.
@@ -81,6 +86,9 @@ unset GITHUB_ACTIONS || true
 file_version="$(tr -d ' \n' <VERSION)"
 export SHELLSENTRY_RELEASE_TAG="v${file_version}"
 export SHELLSENTRY_PGP_KEY_ID=0123456789ABCDEF0123456789ABCDEF01234567!
+export SHELLSENTRY_GPG_SIGNING_FINGERPRINT="$(awk '$1=="gpg" {print $2}' "$ROOT/keys/expected-fingerprints.txt")"
+export SHELLSENTRY_TAGGER_NAME='3 Leaps Infosec Team'
+export SHELLSENTRY_TAGGER_EMAIL='infosec@3leaps.net'
 fake_home="$scratch/home"
 mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"

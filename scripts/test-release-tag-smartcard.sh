@@ -143,21 +143,34 @@ SH
 chmod +x "$scratch/bin/gpg" "$scratch/bin/gpgconf" "$scratch/bin/gpgconf.homedir-only"
 
 fixture="$scratch/repo"
+remote="$scratch/remote.git"
 git init -q -b main "$fixture"
+git init -q --bare "$remote"
 git -C "$fixture" config gpg.format openpgp
 git -C "$fixture" config gpg.program gpg
 git -C "$fixture" config commit.gpgsign false
-git -C "$fixture" config user.name 'Synthetic signing'
-git -C "$fixture" config user.email 'signing@example.invalid'
-mkdir -p "$fixture/docs/security" "$fixture/keys" "$fixture/scripts"
-cp "$ROOT/scripts/release-tag.sh" "$ROOT/scripts/verify-pinned-tag.sh" "$ROOT/scripts/release-ci-refuse.sh" "$fixture/scripts/"
-chmod +x "$fixture/scripts/"*.sh
+git -C "$fixture" config user.name '3 Leaps Infosec Team'
+git -C "$fixture" config user.email 'infosec@3leaps.net'
+mkdir -p "$fixture/docs/security" "$fixture/keys" "$fixture/scripts" "$fixture/config/release"
+cp "$ROOT/scripts/release-tag.sh" "$ROOT/scripts/verify-pinned-tag.sh" \
+	"$ROOT/scripts/release-ci-refuse.sh" "$ROOT/scripts/release-tag-common.sh" \
+	"$ROOT/scripts/release-guard-tag-version.sh" "$ROOT/scripts/release-tag-body.sh" \
+	"$ROOT/scripts/release-prepare-tag-message.py" "$fixture/scripts/"
+chmod +x "$fixture/scripts/"*
+printf '3 Leaps Infosec Team <infosec@3leaps.net>\n' >"$fixture/config/release/tagger-identity.txt"
 gpg --homedir "$op" --batch --armor --export "$primary" >"$fixture/docs/security/release-signing-keys.asc"
 printf 'gpg %s\nminisign %s\n' "$primary" "$(printf 'a%.0s' {1..64})" >"$fixture/keys/expected-fingerprints.txt"
 echo '0.0.0' >"$fixture/VERSION"
 printf 'fixture\n' >"$fixture/file"
-git -C "$fixture" add VERSION file docs/security keys scripts
+git -C "$fixture" add VERSION file docs/security keys scripts config
 git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
+git -C "$fixture" remote add origin https://github.com/3leaps/shellsentry.git
+git -C "$fixture" config "url.$remote.insteadOf" https://github.com/3leaps/shellsentry.git
+git -C "$fixture" push -q origin main
+git -C "$fixture" update-ref refs/remotes/origin/main "$(git -C "$fixture" rev-parse HEAD)"
+msgdir="$scratch/v0.0.0"
+mkdir -p "$msgdir"
+printf 'shellsentry v0.0.0\n' >"$msgdir/message.txt"
 
 export PATH="$scratch/bin:$PATH"
 export REAL_GPG="$real_gpg" REAL_GPGCONF="$real_gpgconf"
@@ -194,7 +207,11 @@ chmod 700 "$fake_home/.gnupg"
 export HOME="$fake_home"
 export SHELLSENTRY_RELEASE_TAG=v0.0.0
 export SHELLSENTRY_PGP_KEY_ID="${subkey}!"
+export SHELLSENTRY_GPG_SIGNING_FINGERPRINT="$primary"
 export SHELLSENTRY_GPG_HOMEDIR="$op"
+export SHELLSENTRY_TAGGER_NAME='3 Leaps Infosec Team'
+export SHELLSENTRY_TAGGER_EMAIL='infosec@3leaps.net'
+export SHELLSENTRY_TAG_MESSAGE_DIR="$msgdir"
 
 if ! (cd "$fixture" && ./scripts/release-tag.sh) >"$scratch/tag.out" 2>&1; then
     cat "$scratch/tag.out" >&2
@@ -228,6 +245,7 @@ grep -q 'gpgconf --kill all' "$fixture/scripts/release-tag.sh" ||
     fail "bare-kill mutant was not constructed"
 git -C "$fixture" add scripts/release-tag.sh
 git -C "$fixture" -c commit.gpgsign=false commit -qm 'mutant: bare gpgconf --kill'
+git -C "$fixture" push -q origin HEAD:main
 rm -f "$OPERATOR_AGENT_MARKER" "$NO_EXPORT_MARKER"
 : >"$GNUPGHOME_LOG"
 set +e
