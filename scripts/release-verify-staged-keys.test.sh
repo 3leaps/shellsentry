@@ -2,9 +2,11 @@
 # Staged public keys must both be present and match the committed anchors.
 # Throwaway keys only; never the default homedir. Decernor is a recording stub
 # so the explicit fingerprint / blob compares are what catch a bad fixture.
-set -euo pipefail
+set -eEuo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/shs-staged-keys.XXXXXX")"
+# Do not use TMPDIR: macOS /var/folders paths overflow gpg-agent sockets.
+scratch="$(mktemp -d /tmp/shs-sk.XXXXXX)"
+scratch="$(CDPATH= cd -P -- "$scratch" && pwd -P)"
 fake_home="$scratch/home"
 mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"
@@ -27,6 +29,9 @@ fail() {
 	exit 1
 }
 pass() { echo "PASS: $*"; }
+trap 'echo "FAIL: $BASH_COMMAND (line ${BASH_LINENO[0]}, status $?)" >&2' ERR
+
+[[ ${#GNUPGHOME} -lt 80 ]] || fail "GNUPGHOME too long for gpg-agent sockets (${#GNUPGHOME}): $GNUPGHOME"
 
 mutant_repo="$scratch/mutant-repo"
 mutant_sh="$mutant_repo/scripts/release-verify-staged-keys.sh"
@@ -117,7 +122,8 @@ pass 'committed staged keys verify; Decernor saw the staged paths'
 gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
 	'Synthetic unrelated <unrelated@example.invalid>' ed25519 cert 0 \
 	|| fail 'gpg generate-key failed'
-unrelated_primary="$(gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
+listing="$(gpg --batch --with-colons --fingerprint --list-keys)" || fail 'gpg list-keys failed'
+unrelated_primary="$(awk -F: '$1=="fpr" {print $10; exit}' <<<"$listing")"
 gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
 	"$unrelated_primary" ed25519 sign 0 \
 	|| fail 'gpg add signing subkey failed'

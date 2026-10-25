@@ -79,7 +79,9 @@ then
 	die 'checksum manifests do not list exactly the staged archives with matching hashes'
 fi
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/shs-create-draft.XXXXXX")"
+# Short physical /tmp: macOS TMPDIR under /var/folders overflows gpg-agent sockets.
+work="$(mktemp -d /tmp/shs-cd.XXXXXX)"
+work="$(CDPATH= cd -P -- "$work" && pwd -P)"
 cleanup() {
 	env -u GNUPGHOME gpgconf --homedir "$work/gpg" --kill all >/dev/null 2>&1 || true
 	rm -rf "$work"

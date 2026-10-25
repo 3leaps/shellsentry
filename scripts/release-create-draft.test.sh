@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Draft creation verifies real manifests, signatures, and tag-bound archives.
 # Throwaway keys only; never the default homedir or dummy checksum files.
-set -euo pipefail
+set -eEuo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 gopath="$(go env GOPATH)"
 gocache="$(go env GOCACHE)"
 gomodcache="$(go env GOMODCACHE)"
 gotoolchain="${GOTOOLCHAIN:-local}"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/shs-create-draft.XXXXXX")"
+# Do not use TMPDIR: macOS runners put it under /var/folders (a symlink to
+# /private/var/folders) with a path too long for gpg-agent sockets (~104 bytes).
+scratch="$(mktemp -d /tmp/shs-cd.XXXXXX)"
+scratch="$(CDPATH= cd -P -- "$scratch" && pwd -P)"
 fake_home="$scratch/home"
 mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"
@@ -33,6 +36,9 @@ fail() {
 	exit 1
 }
 pass() { echo "PASS: $*"; }
+trap 'echo "FAIL: $BASH_COMMAND (line ${BASH_LINENO[0]}, status $?)" >&2' ERR
+
+[[ ${#GNUPGHOME} -lt 80 ]] || fail "GNUPGHOME too long for gpg-agent sockets (${#GNUPGHOME}): $GNUPGHOME"
 
 command -v gpg >/dev/null 2>&1 || fail 'gpg required'
 command -v minisign >/dev/null 2>&1 || fail 'minisign required'
@@ -55,6 +61,12 @@ grep -q 'minisign -V' "$script" || fail 'release-create-draft.sh must verify min
 grep -q 'VALIDSIG' "$script" || fail 'release-create-draft.sh must verify GPG signatures'
 grep -q 'main.version=' "$script" || fail 'release-create-draft.sh must bind archives to the tag version'
 grep -q 'main.gitCommit=' "$script" || fail 'release-create-draft.sh must bind archives to the tagged commit'
+grep -q 'mktemp -d /tmp/shs-cd.XXXXXX' "$script" || fail 'create-draft work dir must be a short /tmp path'
+if grep -nE 'mktemp -d "\$\{TMPDIR' "$script"; then
+	fail 'create-draft GPG homes must not be created under TMPDIR'
+fi
+grep -q 'scratch="$(mktemp -d /tmp/shs-cd.XXXXXX)"' "$root/scripts/release-create-draft.test.sh" ||
+	fail 'test scratch must be a short /tmp path'
 pass 'create-draft script stays a verified draft and checks manifests, signatures, and tag bind'
 
 if ! python3 - "$script" <<'PY'
@@ -89,14 +101,25 @@ then
 	fail 'test must bind GNUPGHOME before its first gpg call'
 fi
 
+# awk exit in a pipefail pipeline SIGPIPEs gpg; BSD gpg then fails the assignment.
+gpg_listing_fpr() {
+	awk -F: '$1=="fpr" {print $10; exit}' <<<"$1"
+}
+gpg_listing_subkey() {
+	awk -F: '$1=="sub" {s=1; next} s && $1=="fpr" {print $10; exit}' <<<"$1"
+}
+
 gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
 	'Synthetic signing <signing@example.invalid>' ed25519 cert 0 \
 	|| fail 'gpg generate-key failed'
-primary="$(gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
+listing="$(gpg --batch --with-colons --fingerprint --list-keys)" || fail 'gpg list-keys failed'
+primary="$(gpg_listing_fpr "$listing")"
 gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
 	"$primary" ed25519 sign 0 \
 	|| fail 'gpg add signing subkey failed'
-subkey="$(gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
+listing="$(gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$primary")" ||
+	fail 'gpg list-subkeys failed'
+subkey="$(gpg_listing_subkey "$listing")"
 [[ "$primary" =~ ^[0-9A-F]{40}$ && "$subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'fixture signing key missing'
 
 mkdir -m 700 "$scratch/other-gpg"
@@ -107,11 +130,14 @@ other_gpg() { env -u GNUPGHOME gpg --homedir "$scratch/other-gpg" "$@"; }
 other_gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
 	'Synthetic other <other@example.invalid>' ed25519 cert 0 \
 	|| fail 'other gpg generate-key failed'
-other_primary="$(other_gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
+listing="$(other_gpg --batch --with-colons --fingerprint --list-keys)" || fail 'other gpg list-keys failed'
+other_primary="$(gpg_listing_fpr "$listing")"
 other_gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
 	"$other_primary" ed25519 sign 0 \
 	|| fail 'other gpg add signing subkey failed'
-other_subkey="$(other_gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
+listing="$(other_gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary")" ||
+	fail 'other gpg list-subkeys failed'
+other_subkey="$(gpg_listing_subkey "$listing")"
 [[ "$other_primary" =~ ^[0-9A-F]{40}$ && "$other_subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'other fixture signing key missing'
 
 minisign -G -W -p "$scratch/good.pub" -s "$scratch/good.key" >/dev/null 2>&1 || fail 'minisign keygen failed'
@@ -140,7 +166,8 @@ git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
 short="$(git -C "$fixture" rev-parse --short HEAD)"
 GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
 	git -C "$fixture" -c gpg.format=openpgp tag -s -a --cleanup=verbatim \
-	-u "$subkey!" -m 'shellsentry v1.2.3'$'\n' v1.2.3 HEAD
+	-u "$subkey!" -m 'shellsentry v1.2.3'$'\n' v1.2.3 HEAD ||
+	fail 'signed fixture tag failed'
 
 go_build() {
 	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \

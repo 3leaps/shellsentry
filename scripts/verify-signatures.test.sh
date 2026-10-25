@@ -2,9 +2,11 @@
 # Signature verify uses tagged-commit keys only and requires both formats.
 # Throwaway keys; never the default homedir. A real signed fixture must pass
 # so a gate that accepts everything is not enough.
-set -euo pipefail
+set -eEuo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/shs-verify-sigs.XXXXXX")"
+# Do not use TMPDIR: macOS /var/folders paths overflow gpg-agent sockets.
+scratch="$(mktemp -d /tmp/shs-vs.XXXXXX)"
+scratch="$(CDPATH= cd -P -- "$scratch" && pwd -P)"
 fake_home="$scratch/home"
 mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"
@@ -27,6 +29,9 @@ fail() {
 	exit 1
 }
 pass() { echo "PASS: $*"; }
+trap 'echo "FAIL: $BASH_COMMAND (line ${BASH_LINENO[0]}, status $?)" >&2' ERR
+
+[[ ${#GNUPGHOME} -lt 80 ]] || fail "GNUPGHOME too long for gpg-agent sockets (${#GNUPGHOME}): $GNUPGHOME"
 
 command -v gpg >/dev/null 2>&1 || fail 'gpg required'
 command -v minisign >/dev/null 2>&1 || fail 'minisign required'
@@ -51,6 +56,10 @@ if grep -E '^release-verify-signatures:' -A6 "$root/Makefile" | grep -q 'SHELLSE
 fi
 grep -E '^release-tag-tests:' -A40 "$root/Makefile" | grep -q 'test-verify-signatures' ||
 	fail 'release-tag-tests must run test-verify-signatures'
+grep -q 'mktemp -d /tmp/shs-vs.XXXXXX' "$script" || fail 'verify-signatures work dir must be a short /tmp path'
+if grep -nE 'mktemp -d "\$\{TMPDIR' "$script"; then
+	fail 'verify-signatures GPG homes must not be created under TMPDIR'
+fi
 pass 'Makefile and script bind verification to the tagged-commit keys'
 
 if ! python3 - "$root/scripts/verify-signatures.test.sh" <<'PY'
@@ -66,14 +75,24 @@ then
 	fail 'test must bind GNUPGHOME before its first gpg call'
 fi
 
+gpg_listing_fpr() {
+	awk -F: '$1=="fpr" {print $10; exit}' <<<"$1"
+}
+gpg_listing_subkey() {
+	awk -F: '$1=="sub" {s=1; next} s && $1=="fpr" {print $10; exit}' <<<"$1"
+}
+
 gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
 	'Synthetic signing <signing@example.invalid>' ed25519 cert 0 \
 	|| fail 'gpg generate-key failed'
-primary="$(gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
+listing="$(gpg --batch --with-colons --fingerprint --list-keys)" || fail 'gpg list-keys failed'
+primary="$(gpg_listing_fpr "$listing")"
 gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
 	"$primary" ed25519 sign 0 \
 	|| fail 'gpg add signing subkey failed'
-subkey="$(gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
+listing="$(gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$primary")" ||
+	fail 'gpg list-subkeys failed'
+subkey="$(gpg_listing_subkey "$listing")"
 [[ "$primary" =~ ^[0-9A-F]{40}$ && "$subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'fixture signing key missing'
 
 mkdir -m 700 "$scratch/other-gpg"
@@ -84,11 +103,15 @@ other_gpg() { env -u GNUPGHOME gpg --homedir "$scratch/other-gpg" "$@"; }
 other_gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
 	'Synthetic other <other@example.invalid>' ed25519 cert 0 \
 	|| fail 'other gpg generate-key failed'
-other_primary="$(other_gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
+listing="$(other_gpg --batch --with-colons --fingerprint --list-keys)" || fail 'other gpg list-keys failed'
+other_primary="$(gpg_listing_fpr "$listing")"
 other_gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
 	"$other_primary" ed25519 sign 0 \
 	|| fail 'other gpg add signing subkey failed'
-other_subkey="$(other_gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
+listing="$(other_gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary")" ||
+	fail 'other gpg list-subkeys failed'
+other_subkey="$(gpg_listing_subkey "$listing")"
+[[ "$other_primary" =~ ^[0-9A-F]{40}$ && "$other_subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'other fixture signing key missing'
 [[ "$other_primary" =~ ^[0-9A-F]{40}$ && "$other_subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'other fixture signing key missing'
 other_gpg --batch --armor --export "$other_primary" >"$scratch/other.asc"
 

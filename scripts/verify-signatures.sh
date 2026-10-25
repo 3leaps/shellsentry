@@ -18,7 +18,9 @@ command -v minisign >/dev/null 2>&1 || die 'minisign is required to verify manif
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 commit="$(git -C "$root" rev-parse --verify --quiet "${tag}^{commit}")" ||
 	die "cannot peel tagged commit $tag"
-work="$(mktemp -d "${TMPDIR:-/tmp}/shs-verify-sigs.XXXXXX")"
+# Short physical /tmp: macOS TMPDIR under /var/folders overflows gpg-agent sockets.
+work="$(mktemp -d /tmp/shs-vs.XXXXXX)"
+work="$(CDPATH= cd -P -- "$work" && pwd -P)"
 cleanup() {
 	env -u GNUPGHOME gpgconf --homedir "$work/gpg" --kill all >/dev/null 2>&1 || true
 	rm -rf "$work"
