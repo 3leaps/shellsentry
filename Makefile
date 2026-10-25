@@ -42,14 +42,15 @@ BIN_DIR := $(CURDIR)/bin
 
 # Pinned tool versions (bootstrap installs these into BIN_DIR; do not float)
 # SFETCH_VERSION is a published consumable release (minisig path requires >= v0.4.11).
-SFETCH_VERSION := v0.4.13
+SFETCH_VERSION := v0.4.15
 # Immutable sfetch engine pin (action/repo commit that owns bootstrap-sfetch-verified.sh).
 # Coupled with SFETCH_VERSION: advancing the product pin may require a new engine SHA
 # when SFETCH_BOOTSTRAP_MAX moves (see sfetch docs/cicd-usage-guide.md).
-SFETCH_ENGINE_SHA := d0ad13eb352c18f56604c483c733d425af6e9763
-SFETCH_ENGINE_SHA256 := ccdc7e66daacb960c0cce08bced14896b13df6f90dfa5ae43f2d54ca0f95d990
+# Engine is the peeled v0.4.15 tag (c445772), not sfetch's in-tree N-1 pin (v0.4.14).
+SFETCH_ENGINE_SHA := c44577261902c848119d3c89b0138becb613b158
+SFETCH_ENGINE_SHA256 := 9a074a15db18bca93601e23eca54d411ee72ce69413e802e083f535f8203c79a
 # Composite action pin (same commit as engine for this train).
-SFETCH_ACTION_SHA := d0ad13eb352c18f56604c483c733d425af6e9763
+SFETCH_ACTION_SHA := c44577261902c848119d3c89b0138becb613b158
 # Engine source repo (flag-owned; no ambient env seam).
 SFETCH_ENGINE_REPO := 3leaps/sfetch
 # Embedded consumer trust anchor (do not fetch sfetch-minisign.pub from releases).

@@ -10,6 +10,10 @@ Signing and publish scripts run on the maintainer's machine only. They refuse
 `GITHUB_ACTIONS`. CI builds unsigned archives and attaches them to a **draft**
 GitHub release; it never tags, signs, or publishes.
 
+For v0.1.8, `VERSION`, `CHANGELOG.md`, `RELEASE_NOTES.md`, and
+`docs/releases/v0.1.8.md` are already on `main`. Start at the signed-tag step
+below. Do not retag or bump `VERSION` again.
+
 Set the canonical tag (must equal `v$(cat VERSION)`):
 
 ```bash

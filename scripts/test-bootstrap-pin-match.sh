@@ -94,4 +94,20 @@ glob_tmp="$(mktemp -d "${TMPDIR:-/tmp}/shs-pin-glob.XXXXXX")"
 )
 rm -rf "$glob_tmp"
 
+# --- current Makefile pin; stale v0.4.13 must not match ---
+PIN="$(grep -E '^SFETCH_VERSION[[:space:]]*(:=|=)' "$ROOT/Makefile" | head -n1 |
+    sed -E 's/^SFETCH_VERSION[[:space:]]*(:=|=)[[:space:]]*//' |
+    tr -d '\r' | sed 's/[[:space:]]*#.*//' | tr -d '[:space:]')"
+[ "$PIN" = "v0.4.15" ] || fail "Makefile SFETCH_VERSION must be v0.4.15 (got: $PIN)"
+if "$MATCH" "sfetch 0.4.15" "$PIN"; then
+    pass "current sfetch pin v0.4.15 matches"
+else
+    fail "sfetch 0.4.15 should match Makefile pin $PIN"
+fi
+if "$MATCH" "sfetch 0.4.13" "$PIN"; then
+    fail "stale sfetch 0.4.13 must not match pin $PIN"
+else
+    pass "stale sfetch v0.4.13 rejected against current pin"
+fi
+
 echo "[ok] bootstrap pin-match regression complete"
