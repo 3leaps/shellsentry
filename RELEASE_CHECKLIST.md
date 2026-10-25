@@ -203,12 +203,13 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
   make release-publish
   ```
 
-  `release-publish` re-verifies the staged tag anchor, requires an exact
-  draft asset set, checks both manifests and their minisign/PGP signatures
-  against pins in the tagged commit, re-downloads the draft, `cmp`s every
-  asset, then runs `gh release edit --draft=false`. It refuses GitHub
-  Actions and a non-draft release. Do not run `gh release edit --draft=false`
-  by hand.
+  `release-publish` re-verifies the staged tag through the shared tag-anchor
+  (fetches `origin/main` first), requires an exact draft asset set, checks
+  both manifests and their minisign/PGP signatures against pins in the
+  tagged commit, binds each archive to the tagged commit and version,
+  re-downloads the draft, `cmp`s every asset, then runs
+  `gh release edit --draft=false`. It refuses GitHub Actions and a
+  non-draft release. Do not run `gh release edit --draft=false` by hand.
 
 - [ ] Verify release: `gh release view "$SHELLSENTRY_RELEASE_TAG"`
 - [ ] Test install script: download `install-shellsentry.sh`, verify it against

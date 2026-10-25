@@ -28,7 +28,7 @@ git -C "$src" config commit.gpgsign false
 git -C "$src" config gpg.format openpgp
 git -C "$src" config gpg.program gpg
 mkdir -p "$src/scripts" "$src/docs/security" "$src/keys" "$src/config/release"
-cp "$root/scripts/"{verify-pinned-tag.sh,release-decernor.sh,release-verify-published-tag.sh} "$src/scripts/"
+cp "$root/scripts/"{verify-pinned-tag.sh,release-decernor.sh,release-verify-published-tag.sh,release-verify-tag-anchor.sh} "$src/scripts/"
 chmod +x "$src/scripts/"*.sh
 cp "$root/config/release/tagger-identity.txt" "$src/config/release/"
 gpg --batch --armor --export "$primary" > "$src/docs/security/release-signing-keys.asc"
@@ -70,22 +70,32 @@ git -C "$op" commit -qm 'later main'
 git -C "$op" remote set-url origin https://github.com/3leaps/shellsentry.git
 git -C "$op" config url."$scratch/remote.git".insteadOf https://github.com/3leaps/shellsentry.git
 
-# Stub gh: report the GitHub verification for the tag object named in the call.
+# Stub gh: tag-anchor needs git/ref/tags (type=tag) and git/tags (verified).
 mkdir -p "$scratch/bin"
 cat > "$scratch/bin/gh" << 'SH'
 #!/usr/bin/env bash
-object="${2##*/}"
-verified="${FIXTURE_GH_VERIFIED:-true}"
-git -C "$FIXTURE_REMOTE" cat-file -e "$object" 2> /dev/null || exit 1
-commit="$(git -C "$FIXTURE_REMOTE" rev-parse "$object^{}")"
-printf '{"tag":"v1.2.3","object":{"type":"commit","sha":"%s"},"verification":{"verified":%s,"reason":"valid"}}\n' "$commit" "$verified"
+if [[ "$*" == *git/ref/tags/* ]]; then
+    tag="${2##*/}"
+    object="$(git -C "$FIXTURE_REMOTE" rev-parse "refs/tags/$tag" 2>/dev/null)" || exit 1
+    printf '{"object":{"type":"tag","sha":"%s"}}\n' "$object"
+    exit 0
+fi
+if [[ "$*" == *'/git/tags/'* ]]; then
+    object="${2##*/}"
+    verified="${FIXTURE_GH_VERIFIED:-true}"
+    git -C "$FIXTURE_REMOTE" cat-file -e "$object" 2>/dev/null || exit 1
+    commit="$(git -C "$FIXTURE_REMOTE" rev-parse "$object^{}")"
+    printf '{"tag":"v1.2.3","object":{"type":"commit","sha":"%s"},"verification":{"verified":%s,"reason":"valid"}}\n' "$commit" "$verified"
+    exit 0
+fi
+exit 1
 SH
 chmod +x "$scratch/bin/gh"
 export PATH="$scratch/bin:$PATH" FIXTURE_REMOTE="$scratch/remote.git" SHELLSENTRY_RELEASE_TAG=v1.2.3
 export SHELLSENTRY_GPG_SIGNING_FINGERPRINT="$primary"
 
 # The operator's trusted checkout carries the current verifier and helpers.
-cp "$root/scripts/"{verify-pinned-tag.sh,release-decernor.sh,release-verify-published-tag.sh} "$op/scripts/"
+cp "$root/scripts/"{verify-pinned-tag.sh,release-decernor.sh,release-verify-published-tag.sh,release-verify-tag-anchor.sh} "$op/scripts/"
 chmod +x "$op/scripts/"*.sh
 git -C "$op" config gpg.format openpgp
 git -C "$op" config gpg.program gpg

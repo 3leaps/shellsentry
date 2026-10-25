@@ -4,17 +4,16 @@
 #
 # Usage: release-publish.sh vX.Y.Z [source_dir]
 #
-# Before promotion it requires, in order:
-#   1. the published tag still matches the anchor the packages were staged
-#      against (release-verify-published-tag);
-#   2. the release is a draft whose asset names are exactly the expected set;
-#   3. both manifests verify against the local packages;
-#   4. both manifests verify under minisign with the key whose blob hash is the
-#      pin in keys/expected-fingerprints.txt, and under PGP by the single
-#      signing subkey of the committed public key at the pinned primary, with
-#      every trust file read from the anchored tag commit, never the working
-#      tree; the staged PGP key asset must be that key, public only;
-#   5. every draft asset, downloaded fresh, is byte-identical to the local file.
+# Before promotion it reuses the shared helpers, in order:
+#   1. release-verify-published-tag (approved primary, staged .anchor bind,
+#      then release-verify-tag-anchor: origin, GitHub, origin/main, identity);
+#   2. release notes equal the tagged blob;
+#   3. the release is a draft whose asset names are exactly the expected set;
+#   4. both manifests list exactly the staged archives with matching hashes;
+#   5. verify-signatures.sh (minisign and PGP, keys from the tagged commit);
+#   6. release-bind-archives.sh (vcs.revision, vcs.modified, delimited version);
+#   7. staged public-key assets match the tagged pins, public only;
+#   8. every draft asset, downloaded fresh, is byte-identical to the local file.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 # shellcheck source=scripts/release-ci-refuse.sh
@@ -27,7 +26,7 @@ tag="${1:-}"
 src="${2:-dist/release}"
 [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || die 'usage: release-publish.sh vX.Y.Z [source_dir]'
 repo="${SHELLSENTRY_RELEASE_REPO:-3leaps/shellsentry}"
-for tool in gh jq minisign gpg gpgconf cmp git; do
+for tool in gh python3 minisign gpg gpgconf cmp git go; do
 	command -v "$tool" >/dev/null 2>&1 || die "$tool not found in PATH"
 done
 [[ -d "$src" && ! -L "$src" ]] || die "source dir not found: $src"
@@ -50,7 +49,7 @@ for want in "${expected[@]}"; do
 	[[ -f "$src/$want" && ! -L "$src/$want" && -s "$src/$want" ]] || die "missing local release file: $want"
 done
 
-# 1. The tag still matches the staged anchor.
+# 1. The tag still matches the staged anchor (published-tag calls tag-anchor).
 anchor="$src.anchor"
 [[ -f "$anchor" && ! -L "$anchor" ]] || die "missing $anchor; stage packages with make release-download"
 [[ "$(awk -F= '$1=="tag" {print $2}' "$anchor")" == "$tag" ]] || die 'staged anchor is for a different tag'
@@ -60,44 +59,87 @@ SHELLSENTRY_RELEASE_TAG="$tag" SHELLSENTRY_EXPECTED_TAG_OBJECT="$anchor_object" 
 	"$root/scripts/release-verify-published-tag.sh" >/dev/null ||
 	die 'published tag no longer matches the verified anchor'
 
+commit="$(git -C "$root" rev-parse --verify --quiet "${tag}^{commit}")" || die "cannot peel tagged commit $tag"
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'tagged commit is malformed'
+[[ "$commit" == "$anchor_commit" ]] || die 'tagged commit differs from the staged anchor'
+
 # The notes asset must be the per-version notes at the anchored tag commit, the
 # same bytes the draft body was created from.
-tagged_notes="$(git -C "$root" rev-parse --verify --quiet "$anchor_commit:docs/releases/$tag.md")" ||
+tagged_notes="$(git -C "$root" rev-parse --verify --quiet "$commit:docs/releases/$tag.md")" ||
 	die "docs/releases/$tag.md is absent at the tagged commit"
 [[ "$(git -C "$root" hash-object -- "$src/release-notes-$tag.md")" == "$tagged_notes" ]] ||
 	die "release-notes-$tag.md differs from docs/releases/$tag.md at the tagged commit"
 
 # 2. A draft with exactly the expected asset names.
 release="$(gh release view "$tag" --repo "$repo" --json isDraft,assets)" || die "no release for $tag"
-[[ "$(jq -r '.isDraft' <<<"$release")" == true ]] || die "$tag is not a draft; refusing to re-promote"
-diff <(jq -r '.assets[].name' <<<"$release" | sort) <(printf '%s\n' "${expected[@]}" | sort) >/dev/null ||
-	die 'draft assets differ from the expected set'
+python3 - "$release" "${expected[@]}" <<'PY' && rc=0 || rc=$?
+import json, sys
+payload = json.loads(sys.argv[1])
+if payload.get("isDraft") is not True:
+    raise SystemExit(2)
+names = sorted(a.get("name") or "" for a in payload.get("assets") or [])
+expected = sorted(sys.argv[2:])
+if names != expected:
+    raise SystemExit(3)
+PY
+case "$rc" in
+	0) ;;
+	2) die "$tag is not a draft; refusing to re-promote" ;;
+	3) die 'draft assets differ from the expected set' ;;
+	*) die 'could not parse the GitHub release' ;;
+esac
 
 # 3. Each manifest lists exactly the packages, and they match.
-for bits in 256 512; do
-	diff <(awk '{sub(/^\*/, "", $2); print $2}' "$src/SHA${bits}SUMS" | sort) \
-		<(printf '%s\n' "${packages[@]}" | sort) >/dev/null ||
-		die "SHA${bits}SUMS does not list exactly the expected packages"
-	if command -v "sha${bits}sum" >/dev/null 2>&1; then
-		(cd "$src" && "sha${bits}sum" -c "SHA${bits}SUMS" >/dev/null)
-	else
-		(cd "$src" && shasum -a "$bits" -c "SHA${bits}SUMS" >/dev/null)
-	fi || die 'local packages do not match the manifests'
-done
+if ! python3 - "$src" "${packages[@]}" <<'PY'
+import hashlib
+import pathlib
+import sys
 
-# 4. Signatures verify against the pins committed in the anchored tag commit,
-# read as inert blobs; the working tree is never consulted, so a later edit or
-# key rotation on main cannot change who is trusted for this release.
-gpg_home="$(mktemp -d)"
-fresh="$(mktemp -d)"
-pinned="$(mktemp -d)"
-trap 'gpgconf --homedir "$gpg_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gpg_home" "$fresh" "$pinned"' EXIT
+src = pathlib.Path(sys.argv[1])
+expected = sorted(sys.argv[2:])
+for manifest, algorithm, width in (('SHA256SUMS', 'sha256', 64), ('SHA512SUMS', 'sha512', 128)):
+    entries = {}
+    for line in (src / manifest).read_text().splitlines():
+        if not line.strip():
+            continue
+        digest, sep, name = line.partition('  ')
+        name = name.lstrip('*')
+        if not sep or len(digest) != width or name in entries:
+            raise SystemExit(f'error: malformed or duplicate {manifest} line')
+        entries[name] = digest.lower()
+    if sorted(entries) != expected:
+        raise SystemExit(f'error: {manifest} does not list exactly the expected packages')
+    for name in expected:
+        actual = hashlib.new(algorithm, (src / name).read_bytes()).hexdigest()
+        if actual != entries[name]:
+            raise SystemExit(f'error: {manifest} digest mismatch for {name}')
+PY
+then
+	die 'checksum manifests do not list exactly the staged archives with matching hashes'
+fi
+
+# 4. Signatures verify against the pins committed in the tagged commit.
+"$root/scripts/verify-signatures.sh" "$tag" "$src" >/dev/null
+
+# 5. Archives are bound to the signed tag (shared with create-draft).
+"$root/scripts/release-bind-archives.sh" "$tag" "$src" >/dev/null
+
+# Staged public-key assets published beside the signatures must be the tagged
+# pins, public only. verify-signatures already checked the signature bytes;
+# this is the files consumers will download from the release.
+gpg_home="$(mktemp -d /tmp/shs-pb.XXXXXX)"
+gpg_home="$(CDPATH= cd -P -- "$gpg_home" && pwd -P)"
+fresh="$(mktemp -d /tmp/shs-pb.XXXXXX)"
+fresh="$(CDPATH= cd -P -- "$fresh" && pwd -P)"
+pinned="$(mktemp -d /tmp/shs-pb.XXXXXX)"
+pinned="$(CDPATH= cd -P -- "$pinned" && pwd -P)"
+trap 'env -u GNUPGHOME gpgconf --homedir "$gpg_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gpg_home" "$fresh" "$pinned"' EXIT
 chmod 700 "$gpg_home"
 tagged_blob() {
 	local path="$1" out="$2" mode
-	mode="$(git -C "$root" ls-tree "$anchor_commit" -- "$path" | awk '{print $1}')"
+	mode="$(git -C "$root" ls-tree "$commit" -- "$path" | awk '{print $1}')"
 	[[ "$mode" == 100644 || "$mode" == 100755 ]] || die "committed $path required in the tagged commit"
-	git -C "$root" cat-file blob "$anchor_commit:$path" >"$out"
+	git -C "$root" cat-file blob "$commit:$path" >"$out"
 	[[ -s "$out" ]] || die "committed $path is empty in the tagged commit"
 }
 tagged_blob keys/expected-fingerprints.txt "$pinned/anchors"
@@ -105,40 +147,32 @@ tagged_blob docs/security/release-signing-keys.asc "$pinned/pgp.asc"
 pin_gpg="$(awk '$1=="gpg" {print $2}' "$pinned/anchors")"
 pin_minisign="$(awk '$1=="minisign" {print $2}' "$pinned/anchors")"
 [[ "$pin_gpg" =~ ^[0-9A-F]{40}$ && "$pin_minisign" =~ ^[0-9a-f]{64}$ ]] || die 'committed pins are malformed'
-# The minisign pin is the sha256 of the decoded key line. The staged key file
-# must be exactly a comment line plus that key line, and verification uses a key
-# file rebuilt from the pinned line, never the staged file as given.
 staged_minisign_pub="$src/shellsentry-minisign.pub"
 minisign_comment="$(sed -n 1p "$staged_minisign_pub")"
 minisign_line="$(sed -n 2p "$staged_minisign_pub")"
-# Byte-compare the whole file with the two lines it must be: wc -l would miss a
-# third line that has no trailing newline.
 cmp -s "$staged_minisign_pub" <(printf '%s\n%s\n' "$minisign_comment" "$minisign_line") &&
 	[[ "$minisign_comment" == 'untrusted comment: '* ]] ||
 	die 'staged minisign key is not a two-line minisign public key'
 [[ "$minisign_line" =~ ^[A-Za-z0-9+/]+=*$ ]] || die 'staged minisign key is not a two-line minisign public key'
-staged_minisign="$(printf '%s' "$minisign_line" | base64 -d | shasum -a 256 | awk '{print $1}')"
+staged_minisign="$(printf '%s' "$minisign_line" | python3 -c 'import base64,hashlib,sys; print(hashlib.sha256(base64.b64decode(sys.stdin.read().strip())).hexdigest())')"
 [[ "$staged_minisign" == "$pin_minisign" ]] || die 'staged minisign key does not match the pin in the tagged commit'
-printf 'untrusted comment: pinned release key\n%s\n' "$minisign_line" >"$pinned/minisign.pub"
-gpg --homedir "$gpg_home" --batch --quiet --import "$pinned/pgp.asc" 2>/dev/null || die 'committed PGP key failed to import'
-listing="$(gpg --homedir "$gpg_home" --batch --with-colons --with-subkey-fingerprint --list-keys)"
+env -u GNUPGHOME gpg --homedir "$gpg_home" --batch --quiet --import "$pinned/pgp.asc" 2>/dev/null || die 'committed PGP key failed to import'
+listing="$(env -u GNUPGHOME gpg --homedir "$gpg_home" --batch --with-colons --with-subkey-fingerprint --list-keys)"
 [[ "$(awk -F: '$1=="pub" {n++} END {print n+0}' <<<"$listing")" == 1 ]] || die 'committed PGP key must hold exactly one primary'
 [[ "$(awk -F: '$1=="fpr" {print $10; exit}' <<<"$listing")" == "$pin_gpg" ]] || die 'committed PGP key is not the anchored primary'
 pin_subkey="$(awk -F: '$1=="sub" {s=1; cap=$12; next} s && $1=="fpr" {if (cap ~ /s/) print $10; s=0}' <<<"$listing")"
 [[ "$pin_subkey" =~ ^[0-9A-F]{40}$ ]] || die 'committed PGP key must hold exactly one signing subkey'
-# The PGP key published beside the signatures must be that same key, public
-# only, or consumers cannot verify the published signatures. A fresh export can
-# differ in bytes from the committed blob, so compare the key material instead.
-staged_home="$(mktemp -d)"
+staged_home="$(mktemp -d /tmp/shs-pb.XXXXXX)"
+staged_home="$(CDPATH= cd -P -- "$staged_home" && pwd -P)"
 chmod 700 "$staged_home"
 staged_key="$src/shellsentry-release-signing-key.asc"
 check_staged_key() {
 	local listing
-	gpg --homedir "$staged_home" --batch --list-packets "$staged_key" >"$staged_home/packets" 2>/dev/null ||
+	env -u GNUPGHOME gpg --homedir "$staged_home" --batch --list-packets "$staged_key" >"$staged_home/packets" 2>/dev/null ||
 		return 1
 	! grep -qE ':secret (key|sub key) packet:' "$staged_home/packets" || return 2
-	gpg --homedir "$staged_home" --batch --quiet --import "$staged_key" 2>/dev/null || return 1
-	listing="$(gpg --homedir "$staged_home" --batch --with-colons --with-subkey-fingerprint --list-keys)"
+	env -u GNUPGHOME gpg --homedir "$staged_home" --batch --quiet --import "$staged_key" 2>/dev/null || return 1
+	listing="$(env -u GNUPGHOME gpg --homedir "$staged_home" --batch --with-colons --with-subkey-fingerprint --list-keys)"
 	[[ "$(awk -F: '$1=="sec" {n++} END {print n+0}' <<<"$listing")" == 0 ]] || return 2
 	[[ "$(awk -F: '$1=="pub" {n++} END {print n+0}' <<<"$listing")" == 1 ]] || return 3
 	[[ "$(awk -F: '$1=="fpr" {print $10; exit}' <<<"$listing")" == "$pin_gpg" ]] || return 3
@@ -147,7 +181,7 @@ check_staged_key() {
 }
 staged_rc=0
 check_staged_key || staged_rc=$?
-gpgconf --homedir "$staged_home" --kill all >/dev/null 2>&1 || true
+env -u GNUPGHOME gpgconf --homedir "$staged_home" --kill all >/dev/null 2>&1 || true
 rm -rf "$staged_home"
 case "$staged_rc" in
 	0) ;;
@@ -155,19 +189,8 @@ case "$staged_rc" in
 	3) die 'staged PGP key asset is not the committed primary with its pinned signing subkey' ;;
 	*) die 'staged PGP key asset is not a readable OpenPGP public key' ;;
 esac
-for manifest in SHA256SUMS SHA512SUMS; do
-	minisign -Vq -p "$pinned/minisign.pub" -m "$src/$manifest" -x "$src/$manifest.minisig" ||
-		die "minisign verification failed for $manifest"
-	gpg --homedir "$gpg_home" --batch --status-fd 1 --verify "$src/$manifest.asc" "$src/$manifest" 2>/dev/null |
-		awk -v primary="$pin_gpg" -v subkey="$pin_subkey" '
-          $2=="VALIDSIG" {valid++; signer=$3; signer_primary=$NF}
-          $2=="GOODSIG" {good++}
-          $2 ~ /^(EXPKEYSIG|EXPSIG|REVKEYSIG|KEYREVOKED|BADSIG|ERRSIG)$/ {bad++}
-          END { exit !(valid==1 && good==1 && !bad && signer==subkey && signer_primary==primary) }' ||
-		die "PGP signature on $manifest is not a good signature by the pinned signing subkey"
-done
 
-# 5. The draft on GitHub is byte-identical to the verified local set.
+# 6. The draft on GitHub is byte-identical to the verified local set.
 gh release download "$tag" --repo "$repo" --dir "$fresh" >/dev/null || die 'could not download the draft assets'
 for want in "${expected[@]}"; do
 	cmp -s "$fresh/$want" "$src/$want" || die "draft asset differs from the verified local file: $want"

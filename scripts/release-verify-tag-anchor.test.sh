@@ -19,9 +19,21 @@ grep -q 'release-verify-tag-anchor.sh' "$root/scripts/release-create-draft.sh" |
 	fail 'create-draft must verify the tag against origin and GitHub'
 grep -q 'release-verify-tag-anchor.sh' "$root/scripts/verify-signatures.sh" ||
 	fail 'verify-signatures must verify the tag against origin and GitHub'
+grep -q 'release-verify-tag-anchor.sh' "$root/scripts/release-verify-published-tag.sh" ||
+	fail 'published-tag must call the shared tag-anchor helper'
+grep -q 'release-verify-tag-anchor.sh' "$root/scripts/release-verify-staged-keys.sh" ||
+	fail 'verify-staged-keys must verify the tag against origin and GitHub'
+grep -q 'release-bind-archives.sh' "$root/scripts/release-create-draft.sh" ||
+	fail 'create-draft must bind archives via the shared helper'
+grep -q 'release-bind-archives.sh' "$root/scripts/release-publish.sh" ||
+	fail 'publish must bind archives via the shared helper'
+grep -q 'verify-signatures.sh' "$root/scripts/release-publish.sh" ||
+	fail 'publish must verify signatures via the tagged-key helper'
+grep -q 'release-verify-published-tag.sh' "$root/scripts/release-publish.sh" ||
+	fail 'publish must re-check the published tag (which calls tag-anchor)'
 grep -E '^release-tag-tests:' -A50 "$root/Makefile" | grep -q 'test-release-verify-tag-anchor' ||
 	fail 'release-tag-tests must run test-release-verify-tag-anchor'
-pass 'create-draft and verify-signatures call the tag-anchor helper'
+pass 'create-draft, verify-signatures, staged-keys, published-tag, and publish reuse tag-anchor'
 
 tree="$scratch/tree"
 mkdir -p "$tree/scripts" "$tree/docs/security" "$tree/keys"
@@ -136,11 +148,10 @@ attack_commit="$(git -C "$attack" rev-parse HEAD)"
 git -C "$attack" remote remove origin
 git init -q --bare "$scratch/attack-origin.git"
 git -C "$attack" remote add origin "$scratch/attack-origin.git"
-git -C "$attack" push -q origin "$attack_commit:refs/heads/not-main"
-git -C "$attack" push -q origin v1.2.3
-git -C "$attack" fetch -q origin
-# origin/main stays at the good commit if we set it from the original origin.
-git -C "$attack" update-ref refs/remotes/origin/main "$commit"
+# origin/main is the good commit so fetch cannot be skipped: the attacker tag
+# is a child of that commit, not an ancestor.
+git -C "$attack" push -q origin "$commit:refs/heads/main"
+git -C "$attack" push -q origin v1.2.3 --force
 export REF_SHA="$attack_object"
 cat >"$TAG_JSON" <<JSON
 {"tag":"v1.2.3","object":{"type":"commit","sha":"$attack_commit"},"verification":{"verified":true,"reason":"valid"}}
@@ -188,6 +199,13 @@ JSON
 expect_fail 'identity file docs/security/shellsentry-minisign.pub on v1.2.3 differs from origin/main' \
 	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
 pass 'identity mismatch versus origin/main is refused'
+# Put origin/main back on the tagged commit so later checks are not identity failures.
+git -C "$tree" push -q origin "$commit:refs/heads/main" --force
+git -C "$tree" fetch -q origin
+export REF_SHA="$object"
+cat >"$TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$commit"},"verification":{"verified":true,"reason":"valid"}}
+JSON
 
 python3 - "$script" <<'PY' || fail 'tag-anchor source checks missing'
 from pathlib import Path
@@ -198,12 +216,126 @@ for needle in (
     'verification',
     'merge-base --is-ancestor',
     'origin/main',
+    'fetch --quiet origin',
+    'origin remote is required',
     'expected-fingerprints.txt',
     'release-signing-keys.asc',
+    'cat-file -t',
+    'obj.get("sha")',
 ):
     if needle not in text:
         raise SystemExit('missing ' + needle)
 PY
-pass 'tag-anchor source includes remote, GitHub, ancestor, and identity checks'
+pass 'tag-anchor source includes remote, GitHub, ancestor, fetch, and identity checks'
 
-echo '[ok] tag-anchor refuses remote mismatch, unverified GitHub, attacker commit, and identity drift'
+# L3: no origin remote is a named refusal.
+git -C "$tree" remote remove origin
+expect_fail 'origin remote is required' \
+	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
+git -C "$tree" remote add origin "$scratch/origin.git"
+git -C "$tree" fetch -q origin
+pass 'missing origin remote is refused with a clear message'
+
+# L3: GitHub ref SHA mismatch, with a revert proof.
+export REF_SHA="$(printf '%040d' 9)"
+expect_fail 'GitHub tag ref mismatch' \
+	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
+python3 - "$script" "$tree/scripts/release-verify-tag-anchor.sh" <<'PY' || fail 'ref-sha mutant was not distinguished'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'if obj.get("type") != "tag" or obj.get("sha") != sys.argv[2]:'
+new = 'if obj.get("type") != "tag" or False:'
+if old not in text:
+    raise SystemExit('live script is missing the GitHub ref sha check')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('ref-sha mutant still compares sha')
+Path(sys.argv[2]).write_text(mut)
+PY
+chmod +x "$tree/scripts/release-verify-tag-anchor.sh"
+if ! "$tree/scripts/release-verify-tag-anchor.sh" v1.2.3 >/dev/null 2>"$scratch/mut-refsha.err"; then
+	fail "dropping the GitHub ref sha check must accept a mismatched ref (log: $(cat "$scratch/mut-refsha.err"))"
+fi
+cp "$script" "$tree/scripts/release-verify-tag-anchor.sh"
+chmod +x "$tree/scripts/release-verify-tag-anchor.sh"
+export REF_SHA="$object"
+pass 'reverting the GitHub ref sha check accepts a mismatched ref'
+
+# L3: annotated-tag check, with a revert proof. Push a lightweight tag whose
+# GitHub stub still claims type=tag so only the local cat-file check catches it.
+git -C "$tree" tag -d v1.2.3 >/dev/null
+git -C "$tree" tag v1.2.3 "$commit"
+light_object="$(git -C "$tree" rev-parse refs/tags/v1.2.3)"
+git -C "$tree" push -q origin v1.2.3 --force
+export REF_SHA="$light_object"
+expect_fail 'annotated tag required' \
+	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
+python3 - "$script" "$tree/scripts/release-verify-tag-anchor.sh" <<'PY' || fail 'annotated-tag mutant was not distinguished'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '[[ "$(git -C "$root" cat-file -t "$object")" == tag ]] || die \'annotated tag required\''
+new = 'true || die \'annotated tag required\''
+if old not in text:
+    raise SystemExit('live script is missing the annotated-tag check')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('annotated-tag mutant still checks cat-file -t')
+Path(sys.argv[2]).write_text(mut)
+PY
+chmod +x "$tree/scripts/release-verify-tag-anchor.sh"
+if ! "$tree/scripts/release-verify-tag-anchor.sh" v1.2.3 >/dev/null 2>"$scratch/mut-annotated.err"; then
+	fail "dropping the annotated-tag check must accept a lightweight tag (log: $(cat "$scratch/mut-annotated.err"))"
+fi
+cp "$script" "$tree/scripts/release-verify-tag-anchor.sh"
+chmod +x "$tree/scripts/release-verify-tag-anchor.sh"
+git -C "$tree" tag -d v1.2.3 >/dev/null
+git -C "$tree" tag -a v1.2.3 -m 'fixture' "$commit"
+object="$(git -C "$tree" rev-parse refs/tags/v1.2.3)"
+git -C "$tree" push -q origin v1.2.3 --force
+export REF_SHA="$object"
+pass 'reverting the annotated-tag check accepts a lightweight tag'
+
+# L1: fetch origin/main before ancestry. A stale tracking ref would still see
+# the tagged commit as an ancestor after origin/main moved away.
+stale="$scratch/stale-main"
+git init -q -b main "$stale"
+git -C "$stale" config user.name fixture
+git -C "$stale" config user.email fixture@example.invalid
+mkdir -p "$stale/docs/security" "$stale/keys"
+cp "$tree/docs/security/release-signing-keys.asc" "$tree/docs/security/shellsentry-minisign.pub" \
+	"$stale/docs/security/"
+cp "$tree/keys/expected-fingerprints.txt" "$tree/keys/expected-fingerprints.ndjson" "$stale/keys/"
+git -C "$stale" add docs keys
+git -C "$stale" commit -qm unrelated
+git -C "$stale" push -q "$scratch/origin.git" HEAD:main --force
+# Restore a stale origin/main at the tagged commit so only fetch can see the move.
+git -C "$tree" update-ref refs/remotes/origin/main "$commit"
+expect_fail 'tagged commit is not an ancestor of origin/main' \
+	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
+git -C "$tree" update-ref refs/remotes/origin/main "$commit"
+python3 - "$script" "$tree/scripts/release-verify-tag-anchor.sh" <<'PY' || fail 'fetch-origin/main mutant was not distinguished'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'git -C "$root" fetch --quiet origin "+refs/heads/main:refs/remotes/origin/main" ||'
+new = 'true ||'
+if old not in text:
+    raise SystemExit('live script is missing the origin/main fetch')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('fetch mutant still fetches origin/main')
+Path(sys.argv[2]).write_text(mut)
+PY
+chmod +x "$tree/scripts/release-verify-tag-anchor.sh"
+if ! "$tree/scripts/release-verify-tag-anchor.sh" v1.2.3 >/dev/null 2>"$scratch/mut-fetch.err"; then
+	fail "dropping the origin/main fetch must accept a stale tracking ref (log: $(cat "$scratch/mut-fetch.err"))"
+fi
+cp "$script" "$tree/scripts/release-verify-tag-anchor.sh"
+chmod +x "$tree/scripts/release-verify-tag-anchor.sh"
+git -C "$tree" push -q origin "$commit:refs/heads/main" --force
+git -C "$tree" fetch -q origin
+pass 'reverting the origin/main fetch accepts a stale tracking ref'
+
+echo '[ok] tag-anchor refuses remote mismatch, unverified GitHub, attacker commit, identity drift, lightweight tags, and stale origin/main'

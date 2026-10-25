@@ -1,171 +1,381 @@
 #!/usr/bin/env bash
-# Stub-gh controls for release-publish.sh with throwaway minisign and PGP keys.
-# No live GitHub call is made; promotion is recorded only when every gate holds.
-set -euo pipefail
-# CI sets GITHUB_ACTIONS; the real script refuses it.
+# Publish gate: shared tag-anchor, tagged-key, and bind helpers, plus
+# publish-only exact asset set and byte cmp. Throwaway keys only.
+set -eEuo pipefail
 unset GITHUB_ACTIONS || true
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
-scratch="$(mktemp -d)"
+gopath="$(go env GOPATH)"
+gocache="$(go env GOCACHE)"
+gomodcache="$(go env GOMODCACHE)"
+gotoolchain="${GOTOOLCHAIN:-local}"
+scratch="$(mktemp -d /tmp/shs-pb.XXXXXX)"
+scratch="$(CDPATH= cd -P -- "$scratch" && pwd -P)"
+fake_home="$scratch/home"
+mkdir -p "$fake_home/.gnupg"
+chmod 700 "$fake_home/.gnupg"
+printf 'sentinel\n' >"$fake_home/.gnupg/sentinel"
+export HOME="$fake_home"
+unset GPG_AGENT_INFO || true
+export GNUPGHOME="$scratch/gpg"
+mkdir -m 700 "$GNUPGHOME"
+printf 'allow-loopback-pinentry\ndisable-scdaemon\n' >"$GNUPGHOME/gpg-agent.conf"
+printf 'pinentry-mode loopback\n' >"$GNUPGHOME/gpg.conf"
 cleanup() {
-    gpgconf --homedir "$scratch/gpg" --kill all > /dev/null 2>&1 || true
-    rm -rf "$scratch"
+	env -u GNUPGHOME gpgconf --homedir "$GNUPGHOME" --kill all >/dev/null 2>&1 || true
+	env -u GNUPGHOME gpgconf --homedir "$scratch/other-gpg" --kill all >/dev/null 2>&1 || true
+	chmod -R u+w "$scratch" >/dev/null 2>&1 || true
+	rm -rf "$scratch"
 }
 trap cleanup EXIT
-for tool in minisign gpg jq git; do
-    command -v "$tool" > /dev/null 2>&1 || {
-        echo "error: $tool is required for the publish controls" >&2
-        exit 1
-    }
-done
-repo="$scratch/repo"
-mkdir -p "$repo/scripts" "$repo/keys" "$repo/docs/security" "$scratch/bin" "$scratch/gpg"
-chmod 700 "$scratch/gpg"
-cp "$root/scripts/release-publish.sh" "$root/scripts/release-ci-refuse.sh" "$repo/scripts/"
-chmod +x "$repo/scripts/"*.sh
-cat > "$repo/scripts/release-verify-published-tag.sh" << 'SH'
+
+fail() {
+	echo "FAIL: $*" >&2
+	exit 1
+}
+pass() { echo "PASS: $*"; }
+trap 'echo "FAIL: $BASH_COMMAND (line ${BASH_LINENO[0]}, status $?)" >&2' ERR
+
+[[ ${#GNUPGHOME} -lt 80 ]] || fail "GNUPGHOME too long for gpg-agent sockets (${#GNUPGHOME}): $GNUPGHOME"
+
+command -v gpg >/dev/null 2>&1 || fail 'gpg required'
+command -v minisign >/dev/null 2>&1 || fail 'minisign required'
+command -v python3 >/dev/null 2>&1 || fail 'python3 required'
+command -v go >/dev/null 2>&1 || fail 'go required'
+command -v jq >/dev/null 2>&1 || fail 'jq required'
+
+script="$root/scripts/release-publish.sh"
+[[ -x "$script" ]] || fail 'release-publish.sh must be executable'
+grep -q 'release-verify-published-tag.sh' "$script" ||
+	fail 'publish must re-check the published tag'
+grep -q 'verify-signatures.sh' "$script" ||
+	fail 'publish must verify signatures via the tagged-key helper'
+grep -q 'release-bind-archives.sh' "$script" ||
+	fail 'publish must bind archives via the shared helper'
+grep -q 'release-verify-tag-anchor.sh' "$root/scripts/release-verify-published-tag.sh" ||
+	fail 'published-tag must call tag-anchor'
+grep -E '^release-tag-tests:' -A50 "$root/Makefile" | grep -q 'test-release-publish' ||
+	fail 'release-tag-tests must run test-release-publish'
+pass 'publish reuses tag-anchor, tagged-key, and bind helpers'
+
+gpg_listing_fpr() {
+	awk -F: '$1=="fpr" {print $10; exit}' <<<"$1"
+}
+gpg_listing_subkey() {
+	awk -F: '$1=="sub" {s=1; next} s && $1=="fpr" {print $10; exit}' <<<"$1"
+}
+
+gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
+	'Synthetic signing <signing@example.invalid>' ed25519 cert 0 \
+	|| fail 'gpg generate-key failed'
+listing="$(gpg --batch --with-colons --fingerprint --list-keys)" || fail 'gpg list-keys failed'
+primary="$(gpg_listing_fpr "$listing")"
+gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
+	"$primary" ed25519 sign 0 \
+	|| fail 'gpg add signing subkey failed'
+listing="$(gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$primary")" ||
+	fail 'gpg list-subkeys failed'
+subkey="$(gpg_listing_subkey "$listing")"
+[[ "$primary" =~ ^[0-9A-F]{40}$ && "$subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'fixture signing key missing'
+export SHELLSENTRY_GPG_SIGNING_FINGERPRINT="$primary"
+
+mkdir -m 700 "$scratch/other-gpg"
+printf 'allow-loopback-pinentry\ndisable-scdaemon\n' >"$scratch/other-gpg/gpg-agent.conf"
+printf 'pinentry-mode loopback\n' >"$scratch/other-gpg/gpg.conf"
+other_gpg() { env -u GNUPGHOME gpg --homedir "$scratch/other-gpg" "$@"; }
+other_gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
+	'Synthetic other <other@example.invalid>' ed25519 cert 0 \
+	|| fail 'other gpg generate-key failed'
+listing="$(other_gpg --batch --with-colons --fingerprint --list-keys)" || fail 'other gpg list-keys failed'
+other_primary="$(gpg_listing_fpr "$listing")"
+other_gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
+	"$other_primary" ed25519 sign 0 \
+	|| fail 'other gpg add signing subkey failed'
+listing="$(other_gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary")" ||
+	fail 'other gpg list-subkeys failed'
+other_subkey="$(gpg_listing_subkey "$listing")"
+
+minisign -G -W -p "$scratch/good.pub" -s "$scratch/good.key" >/dev/null 2>&1 || fail 'minisign keygen failed'
+minisign -G -W -p "$scratch/bad.pub" -s "$scratch/bad.key" >/dev/null 2>&1 || fail 'wrong minisign keygen failed'
+
+cat >"$scratch/decernor" <<'EOF'
 #!/usr/bin/env bash
-[[ "${FIXTURE_TAG_REPLACED:-0}" == 0 ]] || { echo 'error: tag replaced' >&2; exit 1; }
-SH
-chmod +x "$repo/scripts/release-verify-published-tag.sh"
+case "$1 ${2:-}" in
+  'version ') echo 'decernor 0.1.8' ;;
+  'version -e') printf 'Version:         0.1.8\nCommit:          testdata\nBuild Date:      testdata\nGo Version:      testdata\nGofulmen:        testdata\nCrucible:        testdata\n' ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$scratch/decernor"
+export SHELLSENTRY_DECERNOR_BIN="$scratch/decernor"
 
-# Throwaway signing keys and the committed pins they correspond to.
-home="$scratch/gpg"
-gpg --homedir "$home" --batch --quiet --pinentry-mode loopback --passphrase '' \
-    --quick-generate-key 'Synthetic signing <signing@example.invalid>' ed25519 cert,sign 1d > /dev/null 2>&1
-primary="$(gpg --homedir "$home" --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-gpg --homedir "$home" --batch --quiet --pinentry-mode loopback --passphrase '' --quick-add-key "$primary" ed25519 sign 1d > /dev/null 2>&1
-subkey="$(gpg --homedir "$home" --batch --with-colons --with-subkey-fingerprint --list-keys | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
-gpg --homedir "$home" --batch --armor --export "$primary" > "$repo/docs/security/release-signing-keys.asc"
-minisign -G -W -p "$scratch/minisign.pub" -s "$scratch/minisign.key" > /dev/null
-pin_minisign="$(sed -n 2p "$scratch/minisign.pub" | base64 -d | shasum -a 256 | awk '{print $1}')"
-printf 'gpg %s\nminisign %s\n' "$primary" "$pin_minisign" > "$repo/keys/expected-fingerprints.txt"
-
-mkdir -p "$repo/docs/releases"
-printf '# notes\n' > "$repo/docs/releases/v1.2.3.md"
-git -C "$repo" init -q -b main
+repo="$scratch/repo"
+git init -q -b main "$repo"
+git -C "$repo" config gpg.format openpgp
+git -C "$repo" config gpg.program gpg
 git -C "$repo" config commit.gpgsign false
-git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid add docs/releases/v1.2.3.md \
-    keys/expected-fingerprints.txt docs/security/release-signing-keys.asc
-git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm fixture
-tagged_commit="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" config user.name '3 Leaps Infosec Team'
+git -C "$repo" config user.email 'infosec@3leaps.net'
+mkdir -p "$repo/docs/security" "$repo/docs/releases" "$repo/scripts" "$repo/keys" "$repo/config/release"
+cp "$script" "$root/scripts/release-ci-refuse.sh" "$root/scripts/release-verify-tag-anchor.sh" \
+	"$root/scripts/release-bind-archives.sh" "$root/scripts/verify-signatures.sh" \
+	"$root/scripts/release-verify-published-tag.sh" "$root/scripts/verify-pinned-tag.sh" \
+	"$root/scripts/release-decernor.sh" "$repo/scripts/"
+chmod +x "$repo/scripts/"*.sh
+cp "$root/config/release/tagger-identity.txt" "$repo/config/release/"
+cp -a "$root/internal" "$repo/"
+cp "$root/main.go" "$root/go.mod" "$root/go.sum" "$repo/"
+gpg --batch --armor --export "$primary" >"$repo/docs/security/release-signing-keys.asc"
+cp "$scratch/good.pub" "$repo/docs/security/shellsentry-minisign.pub"
+printf 'notes for v1.2.3\n' >"$repo/docs/releases/v1.2.3.md"
+blob="$(python3 -c 'import base64,hashlib,pathlib,sys; print(hashlib.sha256(base64.b64decode(pathlib.Path(sys.argv[1]).read_text().splitlines()[1])).hexdigest())' "$scratch/good.pub")"
+printf 'gpg %s\nminisign %s\n' "$primary" "$blob" >"$repo/keys/expected-fingerprints.txt"
+printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$repo/keys/expected-fingerprints.ndjson"
+git -C "$repo" add docs keys scripts internal main.go go.mod go.sum config
+git -C "$repo" -c commit.gpgsign=false commit -qm fixture
+full="$(git -C "$repo" rev-parse HEAD)"
+GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
+	git -C "$repo" -c gpg.format=openpgp tag -s -a --cleanup=verbatim \
+	-u "$subkey!" -m 'shellsentry v1.2.3'$'\n' v1.2.3 HEAD ||
+	fail 'signed fixture tag failed'
+orig_object="$(git -C "$repo" rev-parse refs/tags/v1.2.3)"
+git init -q --bare "$scratch/origin.git"
+git -C "$repo" remote add origin "$scratch/origin.git"
+git -C "$repo" push -q origin HEAD:main
+git -C "$repo" push -q origin v1.2.3
+git -C "$repo" remote set-url origin https://github.com/3leaps/shellsentry.git
+git -C "$repo" config url."$scratch/origin.git".insteadOf https://github.com/3leaps/shellsentry.git
+git -C "$repo" fetch -q origin
+
+go_build() {
+	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
+		CGO_ENABLED=0 go build "$@"
+}
+mkdir -p "$scratch/bin"
+(cd "$repo" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/shellsentry" .)
+[[ -s "$scratch/bin/shellsentry" ]] || fail 'fixture binary missing'
+(cd "$repo" && GOOS=darwin GOARCH=arm64 go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/shellsentry-darwin" .)
+[[ -s "$scratch/bin/shellsentry-darwin" ]] || fail 'darwin fixture binary missing'
+
+pack_from() {
+	local binary="$1" dest="$2" darwin="${3:-$1}"
+	rm -rf "$dest"
+	mkdir -p "$dest"
+	python3 - "$binary" "$dest" "$root/scripts/install-shellsentry.sh" "$darwin" <<'PY'
+import hashlib
+import io
+import pathlib
+import sys
+import tarfile
+import zipfile
+
+binary = pathlib.Path(sys.argv[1])
+dest = pathlib.Path(sys.argv[2])
+installer_src = pathlib.Path(sys.argv[3])
+darwin_bin = pathlib.Path(sys.argv[4])
+payload = binary.read_bytes()
+darwin_payload = darwin_bin.read_bytes()
+for name in (
+    "shellsentry_linux_amd64.tar.gz",
+    "shellsentry_linux_arm64.tar.gz",
+):
+    with tarfile.open(dest / name, "w:gz") as tf:
+        info = tarfile.TarInfo("shellsentry")
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+with tarfile.open(dest / "shellsentry_darwin_arm64.tar.gz", "w:gz") as tf:
+    info = tarfile.TarInfo("shellsentry")
+    info.size = len(darwin_payload)
+    tf.addfile(info, io.BytesIO(darwin_payload))
+for name in (
+    "shellsentry_windows_amd64.zip",
+    "shellsentry_windows_arm64.zip",
+):
+    with zipfile.ZipFile(dest / name, "w") as zf:
+        zf.writestr("shellsentry.exe", payload)
+(dest / "install-shellsentry.sh").write_bytes(installer_src.read_bytes())
+packages = [
+    "shellsentry_linux_amd64.tar.gz",
+    "shellsentry_linux_arm64.tar.gz",
+    "shellsentry_windows_amd64.zip",
+    "shellsentry_windows_arm64.zip",
+    "shellsentry_darwin_arm64.tar.gz",
+    "install-shellsentry.sh",
+]
+for manifest, algo in (("SHA256SUMS", "sha256"), ("SHA512SUMS", "sha512")):
+    lines = []
+    for name in packages:
+        digest = hashlib.new(algo, (dest / name).read_bytes()).hexdigest()
+        lines.append(f"{digest}  {name}")
+    (dest / manifest).write_text("\n".join(lines) + "\n")
+PY
+}
+
+sign_dir() {
+	local dest="$1"
+	minisign -S -s "$scratch/good.key" -m "$dest/SHA256SUMS" -x "$dest/SHA256SUMS.minisig" >/dev/null
+	minisign -S -s "$scratch/good.key" -m "$dest/SHA512SUMS" -x "$dest/SHA512SUMS.minisig" >/dev/null
+	gpg --batch --yes --armor --local-user "$subkey!" --detach-sign -o "$dest/SHA256SUMS.asc" "$dest/SHA256SUMS"
+	gpg --batch --yes --armor --local-user "$subkey!" --detach-sign -o "$dest/SHA512SUMS.asc" "$dest/SHA512SUMS"
+}
 
 d="$scratch/dist"
 stage() {
-    rm -rf "$d" "$scratch/draft"
-    mkdir -p "$d" "$scratch/draft"
-    for f in linux_amd64.tar.gz linux_arm64.tar.gz windows_amd64.zip windows_arm64.zip darwin_arm64.tar.gz; do
-        printf 'pkg %s\n' "$f" > "$d/shellsentry_$f"
-    done
-    printf '#!/bin/sh\necho installer\n' > "$d/install-shellsentry.sh"
-    (cd "$d" && shasum -a 256 shellsentry_linux_amd64.tar.gz shellsentry_linux_arm64.tar.gz \
-        shellsentry_windows_amd64.zip shellsentry_windows_arm64.zip shellsentry_darwin_arm64.tar.gz \
-        install-shellsentry.sh > SHA256SUMS &&
-        shasum -a 512 shellsentry_linux_amd64.tar.gz shellsentry_linux_arm64.tar.gz \
-        shellsentry_windows_amd64.zip shellsentry_windows_arm64.zip shellsentry_darwin_arm64.tar.gz \
-        install-shellsentry.sh > SHA512SUMS)
-    for m in SHA256SUMS SHA512SUMS; do
-        minisign -S -s "$scratch/minisign.key" -m "$d/$m" -x "$d/$m.minisig" > /dev/null
-        gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' \
-            --local-user "$subkey!" --armor --detach-sign --output "$d/$m.asc" "$d/$m" 2> /dev/null
-    done
-    cp "$scratch/minisign.pub" "$d/shellsentry-minisign.pub"
-    git -C "$repo" cat-file blob "$tagged_commit:docs/security/release-signing-keys.asc" > "$d/shellsentry-release-signing-key.asc"
-    cp "$repo/docs/releases/v1.2.3.md" "$d/release-notes-v1.2.3.md"
-    printf 'tag=v1.2.3\nobject=%040d\ncommit=%s\n' 1 "$tagged_commit" > "$d.anchor"
-    cp "$d"/* "$scratch/draft/"
+	pack_from "$scratch/bin/shellsentry" "$d" "$scratch/bin/shellsentry-darwin"
+	sign_dir "$d"
+	cp "$scratch/good.pub" "$d/shellsentry-minisign.pub"
+	git -C "$repo" cat-file blob "$full:docs/security/release-signing-keys.asc" \
+		>"$d/shellsentry-release-signing-key.asc"
+	git -C "$repo" cat-file blob "$full:docs/releases/v1.2.3.md" >"$d/release-notes-v1.2.3.md"
+	printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$orig_object" "$full" >"$d.anchor"
+	rm -rf "$scratch/draft"
+	mkdir -p "$scratch/draft"
+	cp "$d"/* "$scratch/draft/"
 }
 
-# Stub gh: the draft's assets are whatever sits in $scratch/draft.
-cat > "$scratch/bin/gh" << 'SH'
+mkdir -p "$scratch/bin-path"
+export FIXTURE_LOG="$scratch/gh.log"
+export FIXTURE_DRAFT="$scratch/draft"
+export FIXTURE_REMOTE="$scratch/origin.git"
+export GH_TAG_JSON="$scratch/tag.json"
+cat >"$GH_TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$full"},"verification":{"verified":true,"reason":"valid"}}
+JSON
+cat >"$scratch/bin-path/gh" <<'SH'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FIXTURE_LOG"
+printf '%s\n' "$*" >>"$FIXTURE_LOG"
 case "$1 $2" in
+"api "*)
+	if [[ "$2" == *git/ref/tags/* ]]; then
+		tag="${2##*/}"
+		object="$(git -C "$FIXTURE_REMOTE" rev-parse "refs/tags/$tag" 2>/dev/null)" || exit 1
+		printf '{"object":{"type":"tag","sha":"%s"}}\n' "$object"
+		exit 0
+	fi
+	if [[ "$2" == *'/git/tags/'* ]]; then
+		cat "$GH_TAG_JSON"
+		exit 0
+	fi
+	exit 1
+	;;
 "release view")
-    names="$(cd "$FIXTURE_DRAFT" && ls -1 | jq -R . | jq -s 'map({name: .})')"
-    jq -n --argjson a "$names" --argjson d "${FIXTURE_IS_DRAFT:-true}" '{isDraft: $d, assets: $a}'
-    ;;
+	names="$(cd "$FIXTURE_DRAFT" && ls -1 | jq -R . | jq -s 'map({name: .})')"
+	jq -n --argjson a "$names" --argjson d "${FIXTURE_IS_DRAFT:-true}" '{isDraft: $d, assets: $a}'
+	;;
 "release download")
-    dir=""
-    while [[ $# -gt 0 ]]; do
-        [[ "$1" == --dir ]] && dir="$2"
-        shift
-    done
-    cp "$FIXTURE_DRAFT"/* "$dir/"
-    ;;
+	dir=""
+	while [[ $# -gt 0 ]]; do
+		[[ "$1" == --dir ]] && dir="$2"
+		shift
+	done
+	cp "$FIXTURE_DRAFT"/* "$dir/"
+	;;
 "release edit") ;;
 *) exit 1 ;;
 esac
 SH
-chmod +x "$scratch/bin/gh"
-export PATH="$scratch/bin:$PATH" FIXTURE_LOG="$scratch/gh.log" FIXTURE_DRAFT="$scratch/draft"
+chmod +x "$scratch/bin-path/gh"
+export PATH="$scratch/bin-path:$PATH"
 
 refuse() {
-    local reason="$1"
-    : > "$FIXTURE_LOG"
-    if (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") > "$scratch/out" 2>&1; then
-        echo "error: expected rejection: $reason" >&2
-        exit 1
-    fi
-    grep -q "$reason" "$scratch/out" || {
-        echo "error: missing named rejection: $reason" >&2
-        cat "$scratch/out" >&2
-        exit 1
-    }
-    ! grep -q '^release edit' "$FIXTURE_LOG" || {
-        echo "error: promoted despite: $reason" >&2
-        exit 1
-    }
+	local reason="$1"
+	: >"$FIXTURE_LOG"
+	if (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >"$scratch/out" 2>&1; then
+		echo "error: expected rejection: $reason" >&2
+		cat "$scratch/out" >&2
+		exit 1
+	fi
+	grep -q "$reason" "$scratch/out" || {
+		echo "error: missing named rejection: $reason" >&2
+		cat "$scratch/out" >&2
+		exit 1
+	}
+	! grep -q '^release edit' "$FIXTURE_LOG" || {
+		echo "error: promoted despite: $reason" >&2
+		exit 1
+	}
 }
 
 stage
 if (cd "$repo" && env GITHUB_ACTIONS=true ./scripts/release-publish.sh v1.2.3 "$d") >"$scratch/out" 2>&1; then
-    echo 'error: expected rejection: refuse GitHub Actions' >&2
-    exit 1
+	fail 'publish must refuse GitHub Actions'
 fi
 grep -q 'refuse GitHub Actions' "$scratch/out" || {
-    echo 'error: missing named rejection: refuse GitHub Actions' >&2
-    cat "$scratch/out" >&2
-    exit 1
+	echo "error: missing named rejection: refuse GitHub Actions" >&2
+	cat "$scratch/out" >&2
+	exit 1
 }
+pass 'publish refuses GitHub Actions'
+
+# Replaced tag: same commit, new annotated object, approved key. .anchor is the old object.
+stage
+GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
+	git -C "$repo" tag -fs -a --cleanup=verbatim -u "$subkey!" -m 'replaced'$'\n' v1.2.3 HEAD >/dev/null
+git -C "$repo" push -q --force origin refs/tags/v1.2.3
+# Keep the staging anchor on the original object; restore the local tag so the
+# operator checkout still looks like it did at staging time.
+git -C "$repo" update-ref refs/tags/v1.2.3 "$orig_object"
+refuse 'published tag no longer matches the verified anchor'
+git -C "$scratch/origin.git" update-ref refs/tags/v1.2.3 "$orig_object"
+git -C "$repo" update-ref refs/tags/v1.2.3 "$orig_object"
+pass 'replaced tag is refused'
 
 stage
-FIXTURE_TAG_REPLACED=1 refuse 'no longer matches the verified anchor'
-stage
-printf 'sneaky post-tag edit\n' >> "$d/release-notes-v1.2.3.md"
+printf 'sneaky post-tag edit\n' >>"$d/release-notes-v1.2.3.md"
 cp "$d/release-notes-v1.2.3.md" "$scratch/draft/"
 refuse 'differs from docs/releases/v1.2.3.md at the tagged commit'
+pass 'notes edited after tagging are refused'
+
 stage
 FIXTURE_IS_DRAFT=false refuse 'is not a draft'
+unset FIXTURE_IS_DRAFT
+pass 'non-draft release is refused'
+
 stage
-printf 'extra\n' > "$scratch/draft/extra.bin"
+printf 'extra\n' >"$scratch/draft/extra.bin"
 refuse 'draft assets differ from the expected set'
+pass 'extra draft asset is refused'
+
 stage
-printf 'tampered\n' >> "$d/shellsentry_linux_amd64.tar.gz"
-refuse 'local packages do not match the manifests'
-# A manifest that omits a package still passes a plain -c check; refuse it.
+rm -f "$scratch/draft/shellsentry_linux_arm64.tar.gz"
+refuse 'draft assets differ from the expected set'
+pass 'missing draft asset is refused'
+
 stage
-grep -v linux_arm64 "$d/SHA256SUMS" > "$d/SHA256SUMS.short"
-mv "$d/SHA256SUMS.short" "$d/SHA256SUMS"
-cp "$d/SHA256SUMS" "$scratch/draft/"
-refuse 'SHA256SUMS does not list exactly the expected packages'
+printf 'tampered\n' >>"$d/shellsentry_linux_amd64.tar.gz"
+refuse 'digest mismatch'
+pass 'tampered local bytes are refused'
+
 stage
-minisign -G -W -f -p "$scratch/other.pub" -s "$scratch/other.key" > /dev/null
-cp "$scratch/other.pub" "$d/shellsentry-minisign.pub"
+python3 - "$d/SHA256SUMS" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+lines = [ln for ln in p.read_text().splitlines() if 'linux_arm64' not in ln]
+p.write_text('\n'.join(lines) + '\n')
+PY
+sign_dir "$d"
+cp "$d/SHA256SUMS" "$d/SHA256SUMS.minisig" "$d/SHA256SUMS.asc" "$scratch/draft/"
+refuse 'does not list exactly the expected packages'
+pass 'manifest that omits a package is refused'
+
+stage
+cp "$scratch/bad.pub" "$d/shellsentry-minisign.pub"
+cp "$d/shellsentry-minisign.pub" "$scratch/draft/"
 refuse 'does not match the pin in the tagged commit'
-# The staged minisign key must be exactly comment + key line: extra lines refuse.
+pass 'staged minisign key that is not the tagged pin is refused'
+
 stage
-printf 'trailing line\n' >> "$d/shellsentry-minisign.pub"
+printf 'trailing line\n' >>"$d/shellsentry-minisign.pub"
 cp "$d/shellsentry-minisign.pub" "$scratch/draft/"
 refuse 'is not a two-line minisign public key'
-# A third line with no trailing newline is still a third line.
+pass 'minisign key with extra lines is refused'
+
 stage
-printf 'extra-junk' >> "$d/shellsentry-minisign.pub"
-cp "$d/shellsentry-minisign.pub" "$scratch/draft/"
-refuse 'is not a two-line minisign public key'
-stage
-# Flip one signature byte (minisign ignores appended lines), then mirror the
-# tampered file into the draft so only the signature gate can catch it.
-python3 - "$d/SHA256SUMS.minisig" << 'PY'
+python3 - "$d/SHA256SUMS.minisig" <<'PY'
 import base64
 import sys
 lines = open(sys.argv[1]).read().split('\n')
@@ -175,159 +385,42 @@ lines[1] = base64.b64encode(bytes(sig)).decode()
 open(sys.argv[1], 'w').write('\n'.join(lines))
 PY
 cp "$d/SHA256SUMS.minisig" "$scratch/draft/"
-refuse 'minisign verification failed'
+refuse 'minisign signature for SHA256SUMS is invalid'
+pass 'tampered minisign signature is refused'
+
 stage
-gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' \
-    --quick-generate-key 'Other signer <other@example.invalid>' ed25519 sign 1d > /dev/null 2>&1
-gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' --local-user other@example.invalid \
-    --armor --detach-sign --yes --output "$d/SHA512SUMS.asc" "$d/SHA512SUMS" 2> /dev/null
+other_gpg --batch --yes --armor --local-user "$other_subkey!" --detach-sign \
+	-o "$d/SHA512SUMS.asc" "$d/SHA512SUMS"
 cp "$d/SHA512SUMS.asc" "$scratch/draft/"
-refuse 'not a good signature by the pinned signing subkey'
+refuse 'PGP signature for SHA512SUMS is invalid under the committed key'
+pass 'wrong-signer PGP signature is refused'
+
 stage
-printf 'swapped on the server\n' > "$scratch/draft/shellsentry_darwin_arm64.tar.gz"
+printf 'swapped on the server\n' >"$scratch/draft/shellsentry_darwin_arm64.tar.gz"
 refuse 'draft asset differs from the verified local file'
+pass 'draft that differs from the local set is refused'
 
-# Trust comes from the pins in the anchored tag commit, never the working tree.
-# A second key set B stands in for an attacker's or a later rotation's keys.
-gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' \
-    --quick-generate-key 'Rotated signing <rotated@example.invalid>' ed25519 cert 1d > /dev/null 2>&1
-rot_primary="$(gpg --homedir "$home" --batch --with-colons --fingerprint --list-keys rotated@example.invalid | awk -F: '$1=="fpr" {print $10;exit}')"
-gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$rot_primary" ed25519 sign 1d > /dev/null 2>&1
-rot_subkey="$(gpg --homedir "$home" --batch --with-colons --with-subkey-fingerprint --list-keys rotated@example.invalid | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
-minisign -G -W -f -p "$scratch/rot.pub" -s "$scratch/rot.key" > /dev/null
-rot_pin="$(sed -n 2p "$scratch/rot.pub" | base64 -d | shasum -a 256 | awk '{print $1}')"
-pins=(keys/expected-fingerprints.txt docs/security/release-signing-keys.asc)
-mkdir -p "$scratch/saved"
-save_pins() { for p in "${pins[@]}"; do cp "$repo/$p" "$scratch/saved/${p//\//_}"; done; }
-restore_pins() { for p in "${pins[@]}"; do cp "$scratch/saved/${p//\//_}" "$repo/$p"; done; }
-# Move the working-tree pins out of the checkout (saved copies stay intact).
-hide_pins() { for p in "${pins[@]}"; do mv "$repo/$p" "$scratch/saved/hidden-${p//\//_}"; done; }
-write_rotated_pins() {
-    gpg --homedir "$home" --batch --armor --export "$rot_primary" > "$repo/docs/security/release-signing-keys.asc"
-    printf 'gpg %s\nminisign %s\n' "$rot_primary" "$rot_pin" > "$repo/keys/expected-fingerprints.txt"
-}
-# Stage a release signed by B, with B's public keys staged beside it.
-stage_signed_by_rotated() {
-    stage
-    for m in SHA256SUMS SHA512SUMS; do
-        minisign -S -s "$scratch/rot.key" -m "$d/$m" -x "$d/$m.minisig" > /dev/null
-        gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' \
-            --local-user "$rot_subkey!" --armor --detach-sign --yes --output "$d/$m.asc" "$d/$m" 2> /dev/null
-    done
-    cp "$scratch/rot.pub" "$d/shellsentry-minisign.pub"
-    gpg --homedir "$home" --batch --armor --export "$rot_primary" > "$d/shellsentry-release-signing-key.asc"
-    cp "$d"/* "$scratch/draft/"
-}
-save_pins
-# Working-tree pins replaced with B (uncommitted): a B-signed set is refused.
-write_rotated_pins
-stage_signed_by_rotated
-refuse 'staged minisign key does not match the pin in the tagged commit'
-# Same, but minisign re-signed with the pinned key, so only the PGP gates can
-# catch the B signatures and the B key asset.
-stage_signed_by_rotated
-cp "$scratch/minisign.pub" "$d/shellsentry-minisign.pub"
-for m in SHA256SUMS SHA512SUMS; do minisign -S -s "$scratch/minisign.key" -m "$d/$m" -x "$d/$m.minisig" > /dev/null; done
-cp "$d"/* "$scratch/draft/"
-refuse 'staged PGP key asset is not the committed primary with its pinned signing subkey'
-restore_pins
-# Working-tree pins absent: the anchored commit still supplies them, and a
-# correctly signed set publishes.
-hide_pins
 stage
-: > "$FIXTURE_LOG"
-(cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") > /dev/null
-[[ "$(grep -c '^release edit v1.2.3 .*--draft=false' "$FIXTURE_LOG")" == 1 ]]
-restore_pins
-# A later key rotation committed on main, anchor still on the tagged commit: the
-# release must stay bound to the tagged pins. B-signed is refused ...
-write_rotated_pins
-git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid add "${pins[@]}"
-git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm 'rotate keys'
-stage_signed_by_rotated
-refuse 'staged minisign key does not match the pin in the tagged commit'
-# ... and the original signer is still accepted against the tagged pins.
-stage
-: > "$FIXTURE_LOG"
-(cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") > /dev/null
-[[ "$(grep -c '^release edit v1.2.3 .*--draft=false' "$FIXTURE_LOG")" == 1 ]]
-# A tagged commit without the pins refuses outright.
-notes_blob="$(git -C "$repo" rev-parse "$tagged_commit:docs/releases/v1.2.3.md")"
-releases_tree="$(printf '100644 blob %s\tv1.2.3.md\n' "$notes_blob" | git -C "$repo" mktree)"
-docs_tree="$(printf '040000 tree %s\treleases\n' "$releases_tree" | git -C "$repo" mktree)"
-unpinned_tree="$(printf '040000 tree %s\tdocs\n' "$docs_tree" | git -C "$repo" mktree)"
-unpinned_commit="$(git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit-tree "$unpinned_tree" -m 'notes, no pins')"
-stage
-printf 'tag=v1.2.3\nobject=%040d\ncommit=%s\n' 1 "$unpinned_commit" > "$d.anchor"
-refuse 'committed keys/expected-fingerprints.txt required in the tagged commit'
-# A pin path that is a symlink in the tagged commit is not a regular file.
-key_blob="$(git -C "$repo" rev-parse "$tagged_commit:docs/security/release-signing-keys.asc")"
-link_blob="$(printf '../docs/security/release-signing-keys.asc' | git -C "$repo" hash-object -w --stdin)"
-keys_tree="$(printf '120000 blob %s\texpected-fingerprints.txt\n' "$link_blob" | git -C "$repo" mktree)"
-security_tree="$(printf '100644 blob %s\trelease-signing-keys.asc\n' "$key_blob" | git -C "$repo" mktree)"
-docs2_tree="$(printf '040000 tree %s\treleases\n040000 tree %s\tsecurity\n' "$releases_tree" "$security_tree" | git -C "$repo" mktree)"
-linked_tree="$(printf '040000 tree %s\tdocs\n040000 tree %s\tkeys\n' "$docs2_tree" "$keys_tree" | git -C "$repo" mktree)"
-linked_commit="$(git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit-tree "$linked_tree" -m 'symlinked pins')"
-stage
-printf 'tag=v1.2.3\nobject=%040d\ncommit=%s\n' 1 "$linked_commit" > "$d.anchor"
-refuse 'committed keys/expected-fingerprints.txt required in the tagged commit'
-
-# A good signature by the pinned primary itself, not its signing subkey, refuses:
-# the primary can sign, so only the subkey pin rejects it.
-stage
-for m in SHA256SUMS SHA512SUMS; do
-    gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' --local-user "$primary!" \
-        --armor --detach-sign --yes --output "$d/$m.asc" "$d/$m" 2> /dev/null
-done
-cp "$d"/*.asc "$scratch/draft/"
-refuse 'not a good signature by the pinned signing subkey'
-
-# The PGP key asset published beside the signatures must be the committed key:
-# signatures stay valid, only the exported key is swapped or damaged.
-gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' \
-    --quick-generate-key 'Unrelated <unrelated@example.invalid>' ed25519 sign 1d > /dev/null 2>&1
-stage
-gpg --homedir "$home" --batch --armor --export unrelated@example.invalid > "$d/shellsentry-release-signing-key.asc"
+other_gpg --batch --armor --export "$other_primary" >"$d/shellsentry-release-signing-key.asc"
 cp "$d/shellsentry-release-signing-key.asc" "$scratch/draft/"
 refuse 'staged PGP key asset is not the committed primary with its pinned signing subkey'
+pass 'unrelated staged PGP key asset is refused'
+
 stage
-gpg --homedir "$home" --batch --armor --export "$primary" unrelated@example.invalid > "$d/shellsentry-release-signing-key.asc"
-cp "$d/shellsentry-release-signing-key.asc" "$scratch/draft/"
-refuse 'staged PGP key asset is not the committed primary with its pinned signing subkey'
-stage
-printf -- '-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nnot a key\n-----END PGP PUBLIC KEY BLOCK-----\n' > "$d/shellsentry-release-signing-key.asc"
-cp "$d/shellsentry-release-signing-key.asc" "$scratch/draft/"
-refuse 'staged PGP key asset is not a readable OpenPGP public key'
-stage
-gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' --armor --export-secret-keys "$primary" \
-    > "$d/shellsentry-release-signing-key.asc"
+gpg --batch --pinentry-mode loopback --passphrase '' --armor --export-secret-keys "$primary" \
+	>"$d/shellsentry-release-signing-key.asc"
 cp "$d/shellsentry-release-signing-key.asc" "$scratch/draft/"
 refuse 'staged PGP key asset contains secret key material'
-# The pinned primary with an extra signing subkey (a key the committed export
-# does not carry) is not the committed key.
-extra_home="$scratch/gpg-extra"
-mkdir -m 700 "$extra_home"
-gpg --homedir "$home" --batch --pinentry-mode loopback --passphrase '' --armor --export-secret-keys "$primary" |
-    gpg --homedir "$extra_home" --batch --quiet --pinentry-mode loopback --passphrase '' --import 2> /dev/null
-gpg --homedir "$extra_home" --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$primary" ed25519 sign 1d > /dev/null 2>&1
-stage
-gpg --homedir "$extra_home" --batch --armor --export "$primary" > "$d/shellsentry-release-signing-key.asc"
-cp "$d/shellsentry-release-signing-key.asc" "$scratch/draft/"
-refuse 'staged PGP key asset is not the committed primary with its pinned signing subkey'
-gpgconf --homedir "$extra_home" --kill all > /dev/null 2>&1 || true
-# The committed key with its signing subkey, freshly re-exported (bytes may
-# differ from the committed blob), is accepted.
-stage
-gpg --homedir "$home" --batch --armor --export "$primary" > "$d/shellsentry-release-signing-key.asc"
-cp "$d/shellsentry-release-signing-key.asc" "$scratch/draft/"
-: > "$FIXTURE_LOG"
-(cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") > /dev/null
-[[ "$(grep -c '^release edit v1.2.3 .*--draft=false' "$FIXTURE_LOG")" == 1 ]]
+pass 'secret-key PGP asset is refused'
 
-# Every gate holds: promotion happens exactly once, after the byte comparison.
+# Positive control: throwaway-key signed set promotes exactly once, after download.
 stage
-: > "$FIXTURE_LOG"
-(cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") > /dev/null
-[[ "$(grep -c '^release edit v1.2.3 .*--draft=false' "$FIXTURE_LOG")" == 1 ]]
-[[ "$(grep -n '' "$FIXTURE_LOG" | grep -E 'release (download|edit)' | head -1)" == *'release download'* ]]
-echo '[ok] publish promotes only a byte-verified, pin-signed draft'
+: >"$FIXTURE_LOG"
+(cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null
+[[ "$(grep -c '^release edit v1.2.3 .*--draft=false' "$FIXTURE_LOG")" == 1 ]] ||
+	fail 'positive control must promote exactly once'
+[[ "$(grep -n '' "$FIXTURE_LOG" | grep -E 'release (download|edit)' | head -1)" == *'release download'* ]] ||
+	fail 'promotion must happen after the draft download'
+pass 'positive control signed with throwaway keys publishes after byte comparison'
+
+echo '[ok] publish promotes only a byte-verified, pin-signed draft bound to the tag'

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Stub-gh controls for release-fetch-ci-artifacts.sh and release-create-draft.sh.
+# Stub-gh controls for release-fetch-ci-artifacts.sh.
 # No live GitHub call is made; the stub records every invocation.
+# Draft-gate controls live in release-create-draft.test.sh and test-release-publish.sh.
 set -euo pipefail
 unset GITHUB_ACTIONS || true
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -20,7 +21,7 @@ git -C "$repo" commit -qm fixture
 git -C "$repo" tag -am 'Fixture release' v1.2.3
 commit="$(git -C "$repo" rev-parse HEAD)"
 mkdir -p "$repo/scripts"
-cp "$root/scripts/release-fetch-ci-artifacts.sh" "$root/scripts/release-create-draft.sh" "$root/scripts/release-ci-refuse.sh" "$repo/scripts/"
+cp "$root/scripts/release-fetch-ci-artifacts.sh" "$root/scripts/release-ci-refuse.sh" "$repo/scripts/"
 chmod +x "$repo/scripts/"*.sh
 object="$(git -C "$repo" rev-parse refs/tags/v1.2.3)"
 # Stand-in for the trusted published-tag gate (its own suite uses real
@@ -262,117 +263,4 @@ if grep -q '^run download' "$FIXTURE_LOG"; then exit 1; fi
 digest="sha256:$(shasum -a 256 "$FIXTURE_DIR/artifact.zip" | awk '{print $1}')"
 [[ "$(cat "$scratch/d2.anchor")" == "$(printf 'tag=v1.2.3\nobject=%s\ncommit=%s\nrun=11\nattempt=2\nartifact=501\ndigest=%s' "$object" "$commit" "$digest")" ]]
 [[ -f "$scratch/d2/shellsentry_linux_amd64.tar.gz" ]]
-
-# Draft. Packages are staged against the anchor that fetch recorded.
-stage() {
-    local dir="$1" name
-    rm -rf "$dir"
-    mkdir -p "$dir"
-    for name in shellsentry_linux_amd64.tar.gz shellsentry_linux_arm64.tar.gz \
-        shellsentry_windows_amd64.zip shellsentry_windows_arm64.zip shellsentry_darwin_arm64.tar.gz; do
-        printf '%s\n' "$name" > "$dir/$name"
-    done
-    printf '#!/bin/sh\necho installer\n' > "$dir/install-shellsentry.sh"
-    (cd "$dir" && shasum -a 256 shellsentry_linux_amd64.tar.gz shellsentry_linux_arm64.tar.gz \
-        shellsentry_windows_amd64.zip shellsentry_windows_arm64.zip shellsentry_darwin_arm64.tar.gz \
-        install-shellsentry.sh | sed 's| \./| |' > SHA256SUMS &&
-        shasum -a 512 shellsentry_linux_amd64.tar.gz shellsentry_linux_arm64.tar.gz \
-        shellsentry_windows_amd64.zip shellsentry_windows_arm64.zip shellsentry_darwin_arm64.tar.gz \
-        install-shellsentry.sh | sed 's| \./| |' > SHA512SUMS)
-    printf 'tag=v1.2.3\nobject=%s\ncommit=%s\nrun=11\nattempt=2\n' "$object" "$commit" > "$dir.anchor"
-}
-no_create() {
-    if grep -q '^release create' "$FIXTURE_LOG"; then
-        echo "error: draft created despite: $1" >&2
-        exit 1
-    fi
-}
-d="$scratch/draft"
-draft_fail() {
-    local reason="$1"
-    : > "$FIXTURE_LOG"
-    fail "$reason" ./scripts/release-create-draft.sh v1.2.3 "$d"
-    no_create "$reason"
-}
-
-stage "$d"
-FIXTURE_RELEASE_EXISTS=1 draft_fail 'already exists'
-# Unlisted stale archive from another version, present alongside a valid set.
-stage "$d"
-printf 'old\n' > "$d/shellsentry_0.1.0_linux_amd64.tar.gz"
-draft_fail 'unexpected file'
-# Extra, unexpected file of any kind (tooling residue).
-stage "$d"
-printf 'tool\n' > "$d/goneat"
-draft_fail 'unexpected file'
-# Hidden extra files, including names starting with "..", refuse.
-for hidden in .stale '..stale' '...x'; do
-    stage "$d"
-    printf 'x\n' > "$d/$hidden"
-    draft_fail 'unexpected file'
-done
-# A subdirectory is not a regular file and refuses.
-stage "$d"
-mkdir "$d/extra-dir"
-draft_fail 'unexpected file'
-
-# Missing expected archive.
-stage "$d"
-rm "$d/shellsentry_darwin_arm64.tar.gz"
-draft_fail 'missing release file'
-# Manifest that omits an archive, and one listing an extra name.
-stage "$d"
-grep -v darwin "$d/SHA256SUMS" > "$d/x" && mv "$d/x" "$d/SHA256SUMS"
-draft_fail 'does not list exactly'
-stage "$d"
-printf '%064d  shellsentry_0.1.0_linux_amd64.tar.gz\n' 0 >> "$d/SHA512SUMS"
-draft_fail 'malformed or duplicate\|does not list exactly'
-# Archive whose bytes no longer match the manifest.
-stage "$d"
-printf 'tampered\n' > "$d/shellsentry_linux_amd64.tar.gz"
-draft_fail 'digest mismatch'
-# Tag replaced between the earlier checks and the API call.
-stage "$d"
-FIXTURE_TAG_REPLACED=1 draft_fail 'no longer matches the verified anchor'
-# Direct invocation with an empty directory fails closed.
-rm -rf "$d"
-mkdir -p "$d"
-draft_fail 'missing release file'
-
-# Missing, mismatched-tag or malformed anchor refuses.
-stage "$d"
-rm "$d.anchor"
-draft_fail 'missing'
-stage "$d"
-sed -i.bak 's/^tag=v1.2.3$/tag=v1.2.4/' "$d.anchor"
-draft_fail 'different tag'
-stage "$d"
-printf 'tag=v1.2.3\nobject=zz\ncommit=zz\n' > "$d.anchor"
-draft_fail 'malformed'
-
-# The draft body must come from the committed per-version notes.
-stage "$d"
-mv "$repo/docs/releases/v1.2.3.md" "$scratch/notes.hold"
-draft_fail 'missing release notes'
-mv "$scratch/notes.hold" "$repo/docs/releases/v1.2.3.md"
-stage "$d"
-printf 'edited after tagging\n' >> "$repo/docs/releases/v1.2.3.md"
-draft_fail 'differs from the tagged commit'
-git -C "$repo" checkout -q -- docs/releases/v1.2.3.md
-
-# Valid creation: exactly the five archives plus both manifests, re-verified
-# immediately before the create call.
-stage "$d"
-: > "$FIXTURE_LOG"
-(cd "$repo" && ./scripts/release-create-draft.sh v1.2.3 "$d") > /dev/null
-create="$(grep '^release create' "$FIXTURE_LOG")"
-[[ "$create" == *' --verify-tag --draft '* ]]
-[[ "$create" == *"--notes-file $repo/docs/releases/v1.2.3.md"* || "$create" == *'--notes-file '*'/docs/releases/v1.2.3.md'* ]]
-[[ "$create" != *'--generate-notes'* ]]
-[[ "$(grep -o 'shellsentry_[a-z0-9_]*\.\(tar\.gz\|zip\)' <<< "$create" | sort -u | wc -l | tr -d ' ')" == 5 ]]
-[[ "$create" == *'install-shellsentry.sh'* ]]
-[[ "$create" == *'SHA256SUMS'* && "$create" == *'SHA512SUMS'* && "$create" != *'0.1.0'* ]]
-[[ "$(grep -n '' "$FIXTURE_LOG" | grep -E 'reverify|release create' | cut -d: -f2 | head -1)" == reverify* ]]
-# The pre-API re-verification is bound to exactly the staged anchor.
-grep -q "^reverify v1.2.3 expect=$object/$commit\$" "$FIXTURE_LOG"
-echo '[ok] CI-artifact fetch and local draft controls passed'
+echo '[ok] CI-artifact fetch binds run, attempt, digest, and the published-tag anchor'

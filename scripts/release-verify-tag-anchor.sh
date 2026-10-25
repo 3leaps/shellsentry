@@ -18,6 +18,8 @@ object="$(git -C "$root" rev-parse --verify --quiet "refs/tags/$tag")" || die "t
 commit="$(git -C "$root" rev-parse --verify --quiet "${tag}^{commit}")" || die "cannot peel tagged commit $tag"
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'tagged commit is malformed'
 
+git -C "$root" remote get-url origin >/dev/null 2>&1 ||
+	die 'origin remote is required'
 remote_object="$(git -C "$root" ls-remote origin "refs/tags/$tag" | awk '{print $1}')"
 [[ -n "$remote_object" && "$remote_object" == "$object" ]] ||
 	die 'remote tag object differs from local tag'
@@ -47,6 +49,8 @@ if not (
     raise SystemExit(1)
 ' "$tag_json" "$tag" "$commit" || die 'GitHub does not report a verified tag'
 
+git -C "$root" fetch --quiet origin "+refs/heads/main:refs/remotes/origin/main" ||
+	die 'cannot fetch origin/main'
 git -C "$root" rev-parse --verify --quiet origin/main >/dev/null ||
 	die 'origin/main is missing'
 git -C "$root" merge-base --is-ancestor "$commit" origin/main ||

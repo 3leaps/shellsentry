@@ -59,8 +59,11 @@ grep -q 'does not list exactly the expected archives' "$script" ||
 	fail 'release-create-draft.sh must verify checksum listings'
 grep -q 'minisign -V' "$script" || fail 'release-create-draft.sh must verify minisign signatures'
 grep -q 'VALIDSIG' "$script" || fail 'release-create-draft.sh must verify GPG signatures'
-grep -q 'vcs.revision' "$script" || fail 'release-create-draft.sh must bind archives via go version -m vcs.revision'
-grep -q 'delimited' "$script" || fail 'release-create-draft.sh must bind ldflag strings with left and right boundaries'
+grep -q 'release-bind-archives.sh' "$script" || fail 'release-create-draft.sh must bind archives via the shared helper'
+grep -q 'vcs.revision' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must bind archives via go version -m vcs.revision'
+grep -q 'delimited' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must bind ldflag strings with left and right boundaries'
 grep -q 'release-verify-tag-anchor.sh' "$script" || fail 'release-create-draft.sh must verify the tag against origin'
 grep -q 'cat-file blob "$commit:docs/releases/' "$script" ||
 	fail 'release-create-draft.sh must read release notes from the tagged commit'
@@ -155,14 +158,20 @@ git -C "$fixture" config user.name '3 Leaps Infosec Team'
 git -C "$fixture" config user.email 'infosec@3leaps.net'
 mkdir -p "$fixture/docs/security" "$fixture/docs/releases" "$fixture/scripts" "$fixture/keys"
 cp "$script" "$root/scripts/release-ci-refuse.sh" "$root/scripts/release-verify-tag-anchor.sh" \
-	"$fixture/scripts/"
+	"$root/scripts/release-bind-archives.sh" "$fixture/scripts/"
 chmod +x "$fixture/scripts/"*.sh
 cp -a "$root/internal" "$fixture/"
 cp "$root/main.go" "$root/go.mod" "$root/go.sum" "$fixture/"
 fixture_script="$fixture/scripts/release-create-draft.sh"
+fixture_bind="$fixture/scripts/release-bind-archives.sh"
+restore_bind() {
+	cp "$root/scripts/release-bind-archives.sh" "$fixture_bind"
+	chmod +x "$fixture_bind"
+}
 restore_draft() {
 	cp "$script" "$fixture_script"
 	chmod +x "$fixture_script"
+	restore_bind
 }
 gpg --batch --armor --export "$primary" >"$fixture/docs/security/release-signing-keys.asc"
 cp "$scratch/good.pub" "$fixture/docs/security/shellsentry-minisign.pub"
@@ -452,7 +461,7 @@ new = "for manifest, algorithm, width in (('SHA256SUMS', 'sha256', 64),):"
 if old not in text:
     raise SystemExit('live script is missing the SHA512 checksum pass')
 mut = text.replace(old, new, 1)
-if 'SHA512SUMS' in mut.split('bind_archive', 1)[0] and old in mut:
+if 'SHA512SUMS' in mut.split('release-bind-archives.sh', 1)[0] and old in mut:
     raise SystemExit('SHA512 checksum mutant still lists SHA512SUMS')
 Path(sys.argv[2]).write_text(mut)
 PY
@@ -652,12 +661,12 @@ if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '\tbind_archive "$archive"\n'
-new = '\ttrue "$archive"\n'
+old = '"$root/scripts/release-bind-archives.sh" "$tag" "$src"'
+new = 'true'
 if old not in text:
-    raise SystemExit('live script is missing bind_archive calls')
+    raise SystemExit('live script is missing the bind helper call')
 mut = text.replace(old, new, 1)
-if 'bind_archive "$archive"' in mut:
+if 'release-bind-archives.sh' in mut:
     raise SystemExit('bind mutant still binds archives')
 Path(sys.argv[2]).write_text(mut)
 PY
@@ -691,7 +700,7 @@ grep -q 'not bound to signed tag' "$scratch/forged-zz.err" ||
 	fail "forged-zz refusal (log: $(cat "$scratch/forged-zz.err"))"
 pass 'create-draft refuses gitCommit=zz<short>'
 
-if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -739,7 +748,7 @@ PY
 then
 	fail 'forged-zz mutant was not distinguished'
 fi
-chmod +x "$fixture_script"
+chmod +x "$fixture_bind"
 if ! "$fixture_script" v1.2.3 "$forged_zz" >/dev/null 2>"$scratch/mut-zz.err"; then
 	fail "restoring a 7-char right-NUL bind must accept gitCommit=zz<short> (log: $(cat "$scratch/mut-zz.err"))"
 fi
@@ -756,7 +765,7 @@ grep -q 'not bound to signed tag' "$scratch/forged-ver.err" ||
 	fail "forged-version refusal (log: $(cat "$scratch/forged-ver.err"))"
 pass 'create-draft refuses version=11.2.3 for tag 1.2.3'
 
-if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -772,7 +781,7 @@ PY
 then
 	fail 'forged-version mutant was not distinguished'
 fi
-chmod +x "$fixture_script"
+chmod +x "$fixture_bind"
 if ! "$fixture_script" v1.2.3 "$forged_ver" >/dev/null 2>"$scratch/mut-ver.err"; then
 	fail "dropping the version left boundary must accept 11.2.3 (log: $(cat "$scratch/mut-ver.err"))"
 fi
@@ -789,7 +798,7 @@ grep -q 'not bound to signed tag' "$scratch/forged-bt.err" ||
 	fail "forged-buildtime refusal (log: $(cat "$scratch/forged-bt.err"))"
 pass 'create-draft refuses a tagged-commit hash placed only in buildTime'
 
-if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -813,7 +822,7 @@ PY
 then
 	fail 'forged-buildtime mutant was not distinguished'
 fi
-chmod +x "$fixture_script"
+chmod +x "$fixture_bind"
 if ! "$fixture_script" v1.2.3 "$forged_bt" >/dev/null 2>"$scratch/mut-bt.err"; then
 	fail "falling back to a delimited hash must accept buildTime=${full} (log: $(cat "$scratch/mut-bt.err"))"
 fi
@@ -872,7 +881,7 @@ grep -q 'is not a Go binary' "$scratch/nongo.err" ||
 	fail "non-Go refusal (log: $(cat "$scratch/nongo.err"))"
 pass 'create-draft refuses a non-Go binary'
 
-if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -888,7 +897,7 @@ PY
 then
 	fail 'non-Go mutant was not distinguished'
 fi
-chmod +x "$fixture_script"
+chmod +x "$fixture_bind"
 if ! "$fixture_script" v1.2.3 "$nongo" >/dev/null 2>"$scratch/mut-nongo.err"; then
 	fail "dropping the is-Go-binary check must accept a shell script payload (log: $(cat "$scratch/mut-nongo.err"))"
 fi
