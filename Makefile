@@ -85,7 +85,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
 .PHONY: dogfood assert-no-pipe-install-sfetch check-sfetch-pin-freshness
-.PHONY: assert-sfetch-pin-coupling assert-tool-pins test-bootstrap-negative-controls
+.PHONY: assert-sfetch-pin-coupling assert-tool-pins test-assert-tool-pins test-bootstrap-negative-controls
 
 all: build
 
@@ -268,7 +268,7 @@ precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	$(MAKE) release-tag-tests
 	@echo "[ok] Pre-commit checks passed"
 
-prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
+prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select test-assert-tool-pins assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
 	@echo "[ok] Pre-push checks passed"
 
 assess: ## Run goneat assess (format, lint, security)
@@ -607,6 +607,9 @@ assert-sfetch-pin-coupling: ## Fail if CI action SHA/version drift from Makefile
 
 assert-tool-pins: ## Exact sfetch/goneat pin check (stderr-aware)
 	@./scripts/assert-tool-pins.sh "$(SFETCH_VERSION)" "$(GONEAT_VERSION)"
+
+test-assert-tool-pins: ## Regression: pin check does not SIGPIPE on extra version lines
+	@./scripts/test-assert-tool-pins.sh
 
 test-bootstrap-negative-controls: ## Consumer negative controls (digest/tamper/anchor/freshness/dogfood)
 	@./scripts/test-bootstrap-negative-controls.sh

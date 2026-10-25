@@ -24,6 +24,10 @@ Semantic Versioning.
   `actions/checkout` and `actions/setup-go`. `download-artifact` is v7.0.0 to
   match `upload-artifact` v7. `scripts/test-workflow-action-pins.py` fails if
   a pin is reverted to a tag.
+- **Pin assertion does not SIGPIPE.** `make assert-tool-pins` takes the first
+  version line without piping through `head`, so extra output cannot exit 141
+  under `set -o pipefail`. `scripts/test-assert-tool-pins.sh` fails if the
+  piped-head path is restored.
 
 ### Added
 
