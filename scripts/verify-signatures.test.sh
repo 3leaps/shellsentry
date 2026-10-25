@@ -60,6 +60,10 @@ grep -q 'mktemp -d /tmp/shs-vs.XXXXXX' "$script" || fail 'verify-signatures work
 if grep -nE 'mktemp -d "\$\{TMPDIR' "$script"; then
 	fail 'verify-signatures GPG homes must not be created under TMPDIR'
 fi
+grep -q 'release-verify-tag-anchor.sh' "$script" ||
+	fail 'verify-signatures.sh must confirm the tag against origin and GitHub'
+grep -q 'cat-file blob "$commit:docs/security/release-signing-keys.asc"' "$script" ||
+	fail 'verify-signatures.sh must read the GPG pin from the tagged commit'
 pass 'Makefile and script bind verification to the tagged-commit keys'
 
 if ! python3 - "$root/scripts/verify-signatures.test.sh" <<'PY'
@@ -123,19 +127,55 @@ git init -q -b main "$fixture"
 git -C "$fixture" config commit.gpgsign false
 git -C "$fixture" config user.name Fixture
 git -C "$fixture" config user.email fixture@example.invalid
-mkdir -p "$fixture/docs/security" "$fixture/scripts"
-cp "$script" "$fixture/scripts/"
+mkdir -p "$fixture/docs/security" "$fixture/scripts" "$fixture/keys"
+cp "$script" "$root/scripts/release-verify-tag-anchor.sh" "$fixture/scripts/"
 chmod +x "$fixture/scripts/"*.sh
 gpg --batch --armor --export "$primary" >"$fixture/docs/security/release-signing-keys.asc"
 cp "$scratch/good.pub" "$fixture/docs/security/shellsentry-minisign.pub"
-git -C "$fixture" add docs scripts
+blob="$(python3 -c 'import base64,hashlib,pathlib,sys; print(hashlib.sha256(base64.b64decode(pathlib.Path(sys.argv[1]).read_text().splitlines()[1])).hexdigest())' "$scratch/good.pub")"
+printf 'gpg %s\nminisign %s\n' "$primary" "$blob" >"$fixture/keys/expected-fingerprints.txt"
+printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$fixture/keys/expected-fingerprints.ndjson"
+git -C "$fixture" add docs keys scripts
 git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
 git -C "$fixture" tag -am 'v1.2.3' v1.2.3
+full="$(git -C "$fixture" rev-parse HEAD)"
+git init -q --bare "$scratch/origin.git"
+git -C "$fixture" remote add origin "$scratch/origin.git"
+git -C "$fixture" push -q origin HEAD:main
+git -C "$fixture" push -q origin v1.2.3
+git -C "$fixture" fetch -q origin
 fixture_script="$fixture/scripts/verify-signatures.sh"
 restore_script() {
 	cp "$script" "$fixture_script"
 	chmod +x "$fixture_script"
 }
+
+mkdir -p "$scratch/bin-path"
+export GH_TRACE="$scratch/gh.trace"
+: >"$GH_TRACE"
+tag_object="$(git -C "$fixture" rev-parse refs/tags/v1.2.3)"
+export GH_TAG_OBJECT="$tag_object"
+export GH_TAG_JSON="$scratch/tag.json"
+cat >"$GH_TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$full"},"verification":{"verified":true,"reason":"valid"}}
+JSON
+cat >"$scratch/bin-path/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_TRACE}"
+case "$*" in
+  *git/ref/tags/*)
+    printf '{"object":{"type":"tag","sha":"%s"}}\n' "${GH_TAG_OBJECT:?}"
+    ;;
+  *'/git/tags/'*)
+    cat "${GH_TAG_JSON:?}"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$scratch/bin-path/gh"
+export PATH="$scratch/bin-path:$PATH"
 
 write_manifests() {
 	local dest="$1"
@@ -322,5 +362,45 @@ if ! "$fixture_script" v1.2.3 "$gpg_only" >/dev/null 2>"$scratch/mut-one-gpg.err
 fi
 restore_script
 pass 'reverting the both-required check accepts a single-format signature'
+
+# Working-tree GPG pin must not be used. Overwrite the file after the tag.
+cp "$scratch/other.asc" "$fixture/docs/security/release-signing-keys.asc"
+wt_gpg="$scratch/wt-gpg"
+write_manifests "$wt_gpg"
+minisign -S -s "$scratch/good.key" -m "$wt_gpg/SHA256SUMS" -x "$wt_gpg/SHA256SUMS.minisig" >/dev/null
+minisign -S -s "$scratch/good.key" -m "$wt_gpg/SHA512SUMS" -x "$wt_gpg/SHA512SUMS.minisig" >/dev/null
+other_gpg --batch --yes --armor --local-user "$other_subkey!" \
+	--detach-sign -o "$wt_gpg/SHA256SUMS.asc" "$wt_gpg/SHA256SUMS"
+other_gpg --batch --yes --armor --local-user "$other_subkey!" \
+	--detach-sign -o "$wt_gpg/SHA512SUMS.asc" "$wt_gpg/SHA512SUMS"
+if run_verify "$wt_gpg" >/dev/null 2>"$scratch/wt-gpg.err"; then
+	fail 'GPG signatures from a working-tree key must be refused'
+fi
+grep -Eq 'PGP signature|committed|failed to import' "$scratch/wt-gpg.err" ||
+	fail "working-tree GPG refusal (log: $(cat "$scratch/wt-gpg.err"))"
+pass 'verify-signatures refuses a GPG key from the working tree'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'git -C "$root" cat-file blob "$commit:docs/security/release-signing-keys.asc" >"$gpg_pin"'
+new = 'cp "$root/docs/security/release-signing-keys.asc" "$gpg_pin"'
+if old not in text:
+    raise SystemExit('live script does not cat-file the tagged GPG pin')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('working-tree GPG mutant still uses cat-file')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'working-tree GPG mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$wt_gpg" >/dev/null 2>"$scratch/mut-wt-gpg.err"; then
+	fail "reading the GPG pin from the working tree must accept the dirty key (log: $(cat "$scratch/mut-wt-gpg.err"))"
+fi
+restore_script
+pass 'reverting the tagged-commit GPG read accepts a working-tree key'
 
 echo '[ok] signature verify uses tagged-commit keys and requires both formats'

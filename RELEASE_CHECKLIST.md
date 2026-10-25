@@ -137,10 +137,17 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    ```
 
    Runs `gh release create --verify-tag --draft`. Refuses GitHub Actions
-   and refuses if a release for the tag already exists. Checks that both
-   manifests list exactly the staged archives with matching hashes, verifies
-   minisign and GPG signatures with the keys from the tagged commit, and
-   binds each archive's embedded version and commit to the signed tag.
+   and refuses if a release for the tag already exists. Before trusting
+   the tag, confirms the local tag object equals origin, GitHub reports
+   it verified/valid, the tagged commit is an ancestor of `origin/main`,
+   and identity files are byte-identical to `origin/main`. Checks that
+   both manifests list exactly the staged archives with matching hashes,
+   verifies minisign and GPG signatures with the keys from the tagged
+   commit, binds each archive via `go version -m` (`vcs.revision` equals
+   the tagged commit, `vcs.modified` is false) plus delimited ldflag
+   version strings, and reads release notes from the tagged commit
+   (`git cat-file blob <commit>:docs/releases/<tag>.md`), not the
+   working tree.
 
 8. **Export public keys**
 
@@ -154,9 +161,11 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    make release-verify-keys
    ```
 
-   Requires both staged public keys. Decernor checks them against the
-   committed anchors; the primary fingerprint, signing-subkey id, and
-   minisign blob are compared explicitly.
+   Requires both staged public keys and `SHELLSENTRY_RELEASE_TAG`.
+   Decernor checks them against the fingerprint anchors in the tagged
+   commit (PDR-0008 §2.1); the primary fingerprint, signing-subkey id,
+   and minisign blob are compared explicitly. Working-tree identity
+   files are not used as the pin.
 
    Or run all verification in one step:
 

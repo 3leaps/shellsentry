@@ -33,13 +33,26 @@ trap 'echo "FAIL: $BASH_COMMAND (line ${BASH_LINENO[0]}, status $?)" >&2' ERR
 
 [[ ${#GNUPGHOME} -lt 80 ]] || fail "GNUPGHOME too long for gpg-agent sockets (${#GNUPGHOME}): $GNUPGHOME"
 
-mutant_repo="$scratch/mutant-repo"
-mutant_sh="$mutant_repo/scripts/release-verify-staged-keys.sh"
-mkdir -p "$mutant_repo/scripts" "$mutant_repo/keys" "$mutant_repo/docs/security"
-cp "$root/scripts/release-decernor.sh" "$root/scripts/verify-public-key.sh" "$mutant_repo/scripts/"
-cp "$root/keys/expected-fingerprints.txt" "$root/keys/expected-fingerprints.ndjson" "$mutant_repo/keys/"
+fixture="$scratch/repo"
+fixture_script="$fixture/scripts/release-verify-staged-keys.sh"
+mkdir -p "$fixture/scripts" "$fixture/keys" "$fixture/docs/security"
+cp "$root/scripts/release-decernor.sh" "$root/scripts/verify-public-key.sh" \
+	"$root/scripts/release-verify-staged-keys.sh" "$fixture/scripts/"
+cp "$root/keys/expected-fingerprints.txt" "$root/keys/expected-fingerprints.ndjson" "$fixture/keys/"
 cp "$root/docs/security/release-signing-keys.asc" "$root/docs/security/shellsentry-minisign.pub" \
-	"$mutant_repo/docs/security/"
+	"$fixture/docs/security/"
+git init -q -b main "$fixture"
+git -C "$fixture" config user.name Fixture
+git -C "$fixture" config user.email fixture@example.invalid
+git -C "$fixture" config commit.gpgsign false
+git -C "$fixture" add docs keys scripts
+git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
+git -C "$fixture" tag -am 'v1.2.3' v1.2.3
+restore_script() {
+	cp "$root/scripts/release-verify-staged-keys.sh" "$fixture_script"
+	chmod +x "$fixture_script"
+}
+chmod +x "$fixture/scripts/"*.sh
 
 command -v gpg >/dev/null 2>&1 || fail 'gpg required'
 command -v minisign >/dev/null 2>&1 || fail 'minisign required'
@@ -56,6 +69,10 @@ if grep -E '^release-verify-keys:' -A20 "$root/Makefile" | grep -q '\[skip\] No 
 fi
 grep -E '^release-tag-tests:' -A40 "$root/Makefile" | grep -q 'test-release-verify-staged-keys' ||
 	fail 'release-tag-tests must run test-release-verify-staged-keys'
+grep -q 'cat-file blob "$commit:keys/expected-fingerprints.txt"' "$script" ||
+	fail 'release-verify-staged-keys.sh must read anchors from the tagged commit'
+grep -E '^release-verify-keys:' -A8 "$root/Makefile" | grep -q 'SHELLSENTRY_RELEASE_TAG' ||
+	fail 'release-verify-keys must pass the tag to release-verify-staged-keys.sh'
 pass 'Makefile requires both staged keys and runs the invertibility harness'
 
 # Static order: GNUPGHOME is bound before the first gpg call in this file.
@@ -99,7 +116,7 @@ stage_ok() {
 : >"$decernor_log"
 ok_dir="$scratch/ok"
 stage_ok "$ok_dir"
-"$script" "$ok_dir" >/dev/null || fail 'committed staged keys must verify'
+"$fixture_script" v1.2.3 "$ok_dir" >/dev/null || fail 'committed staged keys must verify'
 if ! python3 - "$decernor_log" "$ok_dir" <<'PY'
 from pathlib import Path
 import sys
@@ -130,14 +147,14 @@ gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-
 unrelated_dir="$scratch/unrelated-gpg"
 stage_ok "$unrelated_dir"
 gpg --batch --armor --export "$unrelated_primary" >"$unrelated_dir/shellsentry-release-signing-key.asc"
-if "$script" "$unrelated_dir" >/dev/null 2>"$scratch/unrelated.err"; then
+if "$fixture_script" v1.2.3 "$unrelated_dir" >/dev/null 2>"$scratch/unrelated.err"; then
 	fail 'unrelated staged PGP key must be refused'
 fi
 grep -q 'staged PGP fingerprint' "$scratch/unrelated.err" ||
 	fail "unrelated PGP refusal (log: $(cat "$scratch/unrelated.err"))"
 pass 'unrelated staged PGP key is refused'
 
-if ! python3 - "$script" "$mutant_sh" <<'PY'
+if ! python3 - "$script" "$fixture_script" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -152,24 +169,25 @@ PY
 then
 	fail 'fingerprint-compare mutant was not distinguished'
 fi
-chmod +x "$mutant_sh"
-if ! "$mutant_sh" "$unrelated_dir" >/dev/null 2>"$scratch/mut-unrelated.err"; then
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$unrelated_dir" >/dev/null 2>"$scratch/mut-unrelated.err"; then
 	fail "dropping the fingerprint compare must accept the unrelated PGP key (log: $(cat "$scratch/mut-unrelated.err"))"
 fi
+restore_script
 pass 'reverting the PGP fingerprint compare accepts the unrelated key'
 
 # Missing staged minisign key.
 missing_dir="$scratch/missing-minisign"
 stage_ok "$missing_dir"
 rm -f "$missing_dir/shellsentry-minisign.pub"
-if "$script" "$missing_dir" >/dev/null 2>"$scratch/missing.err"; then
+if "$fixture_script" v1.2.3 "$missing_dir" >/dev/null 2>"$scratch/missing.err"; then
 	fail 'missing staged minisign key must be refused'
 fi
 grep -q 'missing staged minisign key' "$scratch/missing.err" ||
 	fail "missing minisign refusal (log: $(cat "$scratch/missing.err"))"
 pass 'missing staged minisign key is refused'
 
-if ! python3 - "$script" "$mutant_sh" <<'PY'
+if ! python3 - "$script" "$fixture_script" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -186,10 +204,11 @@ PY
 then
 	fail 'missing-minisign mutant was not distinguished'
 fi
-chmod +x "$mutant_sh"
-if ! "$mutant_sh" "$missing_dir" >/dev/null 2>"$scratch/mut-missing.err"; then
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$missing_dir" >/dev/null 2>"$scratch/mut-missing.err"; then
 	fail "dropping the required minisign check must skip a missing key (log: $(cat "$scratch/mut-missing.err"))"
 fi
+restore_script
 pass 'reverting the required minisign check accepts a missing key'
 
 # Wrong minisign public key with the committed PGP pin.
@@ -198,14 +217,14 @@ stage_ok "$wrong_dir"
 minisign -G -W -p "$scratch/wrong.pub" -s "$scratch/wrong.key" >/dev/null 2>&1 ||
 	fail 'minisign keygen failed'
 cp "$scratch/wrong.pub" "$wrong_dir/shellsentry-minisign.pub"
-if "$script" "$wrong_dir" >/dev/null 2>"$scratch/wrong.err"; then
+if "$fixture_script" v1.2.3 "$wrong_dir" >/dev/null 2>"$scratch/wrong.err"; then
 	fail 'wrong staged minisign key must be refused'
 fi
 grep -q 'staged minisign blob' "$scratch/wrong.err" ||
 	fail "wrong minisign refusal (log: $(cat "$scratch/wrong.err"))"
 pass 'wrong staged minisign key is refused'
 
-if ! python3 - "$script" "$mutant_sh" <<'PY'
+if ! python3 - "$script" "$fixture_script" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -220,14 +239,15 @@ PY
 then
 	fail 'minisign-blob mutant was not distinguished'
 fi
-chmod +x "$mutant_sh"
-if ! "$mutant_sh" "$wrong_dir" >/dev/null 2>"$scratch/mut-blob.err"; then
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$wrong_dir" >/dev/null 2>"$scratch/mut-blob.err"; then
 	fail "dropping the minisign blob compare must accept the wrong key (log: $(cat "$scratch/mut-blob.err"))"
 fi
+restore_script
 pass 'reverting the minisign blob compare accepts the wrong key'
 
 # Mutant: Decernor fingerprints the in-tree exports. The argv log must catch it.
-if ! python3 - "$script" "$mutant_sh" <<'PY'
+if ! python3 - "$script" "$fixture_script" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
@@ -243,9 +263,9 @@ PY
 then
 	fail 'in-tree Decernor mutant was not distinguished'
 fi
-chmod +x "$mutant_sh"
+chmod +x "$fixture_script"
 : >"$decernor_log"
-"$mutant_sh" "$ok_dir" >/dev/null || fail 'in-tree Decernor mutant should still pass a good fixture'
+"$fixture_script" v1.2.3 "$ok_dir" >/dev/null || fail 'in-tree Decernor mutant should still pass a good fixture'
 if ! python3 - "$decernor_log" "$ok_dir" <<'PY'
 from pathlib import Path
 import sys
@@ -259,5 +279,40 @@ then
 	fail 'Decernor argv log did not distinguish the in-tree mutant'
 fi
 pass 'Decernor argv log distinguishes fingerprinting in-tree exports'
+restore_script
+
+# Anchors come from the tagged commit (PDR-0008 §2.1), not the working tree.
+tagged_minisign="$(git -C "$fixture" show v1.2.3:keys/expected-fingerprints.txt | awk '$1=="minisign" {print $2}')"
+printf 'gpg %s\nminisign %s\n' "$unrelated_primary" "$tagged_minisign" \
+	>"$fixture/keys/expected-fingerprints.txt"
+if "$fixture_script" v1.2.3 "$unrelated_dir" >/dev/null 2>"$scratch/wt-anchors.err"; then
+	fail 'working-tree fingerprint anchors must not authorize an unrelated staged key'
+fi
+grep -q 'staged PGP fingerprint' "$scratch/wt-anchors.err" ||
+	fail "tagged-anchor refusal (log: $(cat "$scratch/wt-anchors.err"))"
+pass 'staged keys are checked against tagged-commit anchors, not the working tree'
+
+if ! python3 - "$script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'git -C "$root" cat-file blob "$commit:keys/expected-fingerprints.txt" >"$anchors"'
+new = 'cp "$root/keys/expected-fingerprints.txt" "$anchors"'
+if old not in text:
+    raise SystemExit('live script does not cat-file tagged fingerprint anchors')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('working-tree anchor mutant still uses cat-file')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'working-tree anchor mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$unrelated_dir" >/dev/null 2>"$scratch/mut-wt-anchors.err"; then
+	fail "reading anchors from the working tree must accept the unrelated key (log: $(cat "$scratch/mut-wt-anchors.err"))"
+fi
+restore_script
+pass 'reverting anchors to the working tree accepts an unrelated staged key'
 
 echo '[ok] staged public keys refuse unrelated, missing, and wrong keys'

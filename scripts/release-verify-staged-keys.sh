@@ -2,7 +2,7 @@
 # Verify both staged public keys against the committed fingerprint anchors.
 # Decernor is the designated checker; fingerprint and minisign blob are compared
 # explicitly so a throwaway staged key cannot pass.
-# Usage: release-verify-staged-keys.sh [dir]
+# Usage: release-verify-staged-keys.sh vX.Y.Z [dir]
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$root"
@@ -12,9 +12,12 @@ die() {
 	echo "error: $*" >&2
 	exit 1
 }
+tag="${1:-}"
+[[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+	die 'usage: release-verify-staged-keys.sh vX.Y.Z [dir]'
 command -v gpg >/dev/null 2>&1 || die 'gpg is required to verify staged PGP keys'
 command -v python3 >/dev/null 2>&1 || die 'python3 is required to hash the staged minisign blob'
-dir="${1:-dist/release}"
+dir="${2:-dist/release}"
 [[ -d "$dir" && ! -L "$dir" ]] || die "source dir not found: $dir"
 staged_gpg="$dir/shellsentry-release-signing-key.asc"
 staged_minisign="$dir/shellsentry-minisign.pub"
@@ -25,10 +28,22 @@ staged_minisign="$dir/shellsentry-minisign.pub"
 	die "missing staged minisign key: $staged_minisign"
 resolve_release_decernor || die 'trusted Decernor identity/version check failed'
 "$root/scripts/verify-public-key.sh" "$staged_gpg" >/dev/null
-anchors="$root/keys/expected-fingerprints.txt"
-anchors_ndjson="$root/keys/expected-fingerprints.ndjson"
-[[ -f "$anchors" && -s "$anchors" && ! -L "$anchors" ]] || die "committed $anchors missing"
-[[ -f "$anchors_ndjson" && -s "$anchors_ndjson" && ! -L "$anchors_ndjson" ]] || die "committed $anchors_ndjson missing"
+commit="$(git -C "$root" rev-parse --verify --quiet "${tag}^{commit}")" ||
+	die "cannot peel tagged commit $tag"
+work="$(mktemp -d /tmp/shs-sk.XXXXXX)"
+work="$(CDPATH= cd -P -- "$work" && pwd -P)"
+gpg_home="$work/gpg"
+mkdir -m 700 "$gpg_home"
+cleanup() {
+	env -u GNUPGHOME gpgconf --homedir "$gpg_home" --kill all >/dev/null 2>&1 || true
+	rm -rf "$work"
+}
+trap cleanup EXIT
+anchors="$work/expected-fingerprints.txt"
+anchors_ndjson="$work/expected-fingerprints.ndjson"
+git -C "$root" cat-file blob "$commit:keys/expected-fingerprints.txt" >"$anchors"
+git -C "$root" cat-file blob "$commit:keys/expected-fingerprints.ndjson" >"$anchors_ndjson"
+[[ -s "$anchors" && -s "$anchors_ndjson" ]] || die "tagged commit $tag missing fingerprint anchors"
 # Checker sees the staged files, not the in-tree exports. An unrelated staged
 # key must fail even when the committed exports still match the anchors.
 "$RELEASE_DECERNOR_BIN" fingerprint verify \
@@ -39,9 +54,6 @@ anchors_ndjson="$root/keys/expected-fingerprints.ndjson"
 pin_gpg="$(awk '$1=="gpg" {print $2}' "$anchors")"
 pin_minisign="$(awk '$1=="minisign" {print $2}' "$anchors")"
 [[ "$pin_gpg" =~ ^[0-9A-F]{40}$ && "$pin_minisign" =~ ^[0-9a-f]{64}$ ]] || die 'committed pins are malformed'
-gpg_home="$(mktemp -d)"
-trap 'env -u GNUPGHOME gpgconf --homedir "$gpg_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gpg_home"' EXIT
-chmod 700 "$gpg_home"
 env -u GNUPGHOME gpg --homedir "$gpg_home" --batch --quiet --import "$staged_gpg" 2>/dev/null ||
 	die 'staged PGP key failed to import'
 listing="$(env -u GNUPGHOME gpg --homedir "$gpg_home" --batch --with-colons --with-subkey-fingerprint --list-keys)"

@@ -57,7 +57,7 @@ pass "stale prefixed alias and git describe fallback are distinguished"
 for target in release-preflight release-guard-tag-version release-prepare-tag-message release-tag \
 	release-push-tag release-verify-tag release-verify-remote-tag \
 	release-publish release-download release-notes release-sign release-create-draft release-upload \
-	release-export-key release-export-minisign-key release-export-keys release-verify-signatures; do
+	release-export-key release-export-minisign-key release-export-keys release-verify-signatures release-verify-keys; do
 	grep -E "^${target}: require-release-tag" Makefile >/dev/null ||
 		fail "$target must depend on require-release-tag first"
 done
@@ -202,10 +202,13 @@ grep -E '^release-verify-keys:' -A6 Makefile | grep -q 'release-verify-committed
 	fail "release-verify-keys must run release-verify-committed-anchors.sh"
 grep -E '^release-verify-keys:' -A6 Makefile | grep -q 'release-verify-staged-keys.sh' ||
 	fail "release-verify-keys must run release-verify-staged-keys.sh"
+grep -E '^release-verify-keys:' -A6 Makefile | grep -q 'SHELLSENTRY_RELEASE_TAG' ||
+	fail "release-verify-keys must pass the tag to release-verify-staged-keys.sh"
 if grep -E '^release-verify-keys:' -A20 Makefile | grep -q '\[skip\] No minisign'; then
 	fail "release-verify-keys must not skip a missing staged minisign key"
 fi
-if env -u SHELLSENTRY_DECERNOR_BIN -u RELEASE_TAG make -s release-verify-keys >"$scratch/vk-dec.out" 2>&1; then
+if env -u SHELLSENTRY_DECERNOR_BIN -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG="v${file_version}" \
+	make -s release-verify-keys >"$scratch/vk-dec.out" 2>&1; then
 	fail "make release-verify-keys without SHELLSENTRY_DECERNOR_BIN must be refused"
 fi
 grep -q 'SHELLSENTRY_DECERNOR_BIN is required' "$scratch/vk-dec.out" ||
@@ -226,6 +229,8 @@ if 'test-release-verify-staged-keys' not in body:
     raise SystemExit('release-tag-tests must run test-release-verify-staged-keys')
 if 'test-verify-signatures' not in body:
     raise SystemExit('release-tag-tests must run test-verify-signatures')
+if 'test-release-verify-tag-anchor' not in body:
+    raise SystemExit('release-tag-tests must run test-release-verify-tag-anchor')
 if 'test-release-create-draft' not in body:
     raise SystemExit('release-tag-tests must run test-release-create-draft')
 if 'ci-install-decernor' in body or 'test-release-verify-committed-anchors' in body:

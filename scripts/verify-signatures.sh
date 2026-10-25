@@ -14,10 +14,13 @@ dir="${2:-dist/release}"
 	die 'usage: verify-signatures.sh vX.Y.Z [dir]'
 command -v gpg >/dev/null 2>&1 || die 'gpg is required to verify manifest signatures'
 command -v minisign >/dev/null 2>&1 || die 'minisign is required to verify manifest signatures'
+command -v gh >/dev/null 2>&1 || die 'gh (GitHub CLI) is required to confirm the tag'
 [[ -d "$dir" && ! -L "$dir" ]] || die "source dir not found: $dir"
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 commit="$(git -C "$root" rev-parse --verify --quiet "${tag}^{commit}")" ||
 	die "cannot peel tagged commit $tag"
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'tagged commit is malformed'
+"$root/scripts/release-verify-tag-anchor.sh" "$tag"
 # Short physical /tmp: macOS TMPDIR under /var/folders overflows gpg-agent sockets.
 work="$(mktemp -d /tmp/shs-vs.XXXXXX)"
 work="$(CDPATH= cd -P -- "$work" && pwd -P)"

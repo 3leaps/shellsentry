@@ -92,8 +92,8 @@ object="$(git -C "$root" rev-parse --verify --quiet "refs/tags/$tag")" || die "t
 [[ "$(git -C "$root" cat-file -t "$object")" == tag ]] || die 'annotated tag required'
 git -C "$root" cat-file tag "$object" | grep -q 'BEGIN PGP SIGNATURE' || die 'tag is not GPG-signed'
 commit="$(git -C "$root" rev-parse --verify --quiet "${tag}^{commit}")" || die "cannot peel tagged commit $tag"
-short="$(git -C "$root" rev-parse --short "$commit")"
-[[ "$short" =~ ^[0-9a-f]{7,}$ ]] || die 'tagged commit short hash is malformed'
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'tagged commit is malformed'
+"$root/scripts/release-verify-tag-anchor.sh" "$tag"
 gpg_pin="$work/release-signing-keys.asc"
 minisign_pin="$work/shellsentry-minisign.pub"
 git -C "$root" cat-file blob "$commit:docs/security/release-signing-keys.asc" >"$gpg_pin"
@@ -186,38 +186,64 @@ PY
 	fi
 	bin="$dest/shellsentry"
 	[[ -s "$bin" ]] || die "no shellsentry binary in $archive"
-	# Confirm it is a Go binary. Stripped builds (-s -w) do not record
-	# -X main.version= / -X main.gitCommit= in `go version -m`, so the
-	# injected values are matched as right-NUL-terminated strings.
-	# Mach-O can place a non-NUL marker immediately before gitCommit;
-	# requiring a leading NUL rejects real darwin archives.
-	go version -m "$bin" >/dev/null 2>&1 || die "$archive is not a Go binary"
-	if ! python3 - "$bin" "$version" "$short" <<'PY'
+	# Prefer go version -m: vcs.revision is the full 40-char tag commit and
+	# vcs.modified is false. Production ldflags still inject a short
+	# gitCommit, and a 40-char hash in another -X (buildTime) is not a bind.
+	# Version is matched as an exact delimited ldflag string (left and right
+	# boundaries), so 11.2.3 does not satisfy tag 1.2.3.
+	info="$(go version -m "$bin" 2>/dev/null)" || die "$archive is not a Go binary"
+	if ! python3 - "$bin" "$version" "$commit" "$info" <<'PY'
 from pathlib import Path
 import sys
 
 data = Path(sys.argv[1]).read_bytes()
-version, commit = sys.argv[2], sys.argv[3]
+version, full_commit, info = sys.argv[2], sys.argv[3], sys.argv[4]
 
-def has_injected(value: str) -> bool:
+
+def is_hex_digit(byte: int) -> bool:
+    return 48 <= byte <= 57 or 65 <= byte <= 70 or 97 <= byte <= 102
+
+
+def delimited(value: str) -> bool:
     needle = value.encode("ascii")
+    n = len(needle)
+    hex_token = len(value) == 40 and all(c in "0123456789abcdefABCDEF" for c in value)
     start = 0
     while True:
         i = data.find(needle, start)
         if i < 0:
             return False
-        right = i + len(needle) == len(data) or data[i + len(needle)] == 0
-        if right:
+        if hex_token:
+            left_ok = i == 0 or not is_hex_digit(data[i - 1])
+            right_ok = i + n == len(data) or data[i + n] == 0 or not is_hex_digit(data[i + n])
+        else:
+            # Version ldflag is a Go string: right boundary is NUL, left is
+            # not a digit, so 11.2.3 does not satisfy tag 1.2.3.
+            left_ok = i == 0 or not (48 <= data[i - 1] <= 57)
+            right_ok = i + n == len(data) or data[i + n] == 0
+        if left_ok and right_ok:
             return True
         start = i + 1
 
-if not has_injected(version):
+
+vcs_revision = None
+vcs_modified = None
+for raw in info.splitlines():
+    line = raw.strip()
+    if line.startswith("build\tvcs.revision="):
+        vcs_revision = line.split("=", 1)[1]
+    elif line.startswith("build\tvcs.modified="):
+        vcs_modified = line.split("=", 1)[1]
+
+if not delimited(version):
     raise SystemExit("error: archive is not bound to tag version " + version)
-if not has_injected(commit):
-    raise SystemExit("error: archive is not bound to tagged commit " + commit)
+if vcs_revision != full_commit:
+    raise SystemExit("error: archive vcs.revision is not the tagged commit")
+if vcs_modified != "false":
+    raise SystemExit("error: archive vcs.modified is not false")
 PY
 	then
-		die "archive $archive is not bound to signed tag $tag (version $version commit $short)"
+		die "archive $archive is not bound to signed tag $tag (version $version commit $commit)"
 	fi
 }
 for archive in \
@@ -233,8 +259,10 @@ done
 if gh release view "$tag" --repo 3leaps/shellsentry >/dev/null 2>&1; then
 	die "a release for $tag already exists; do not replace it"
 fi
-notes="$root/docs/releases/${tag}.md"
-[[ -f "$notes" && ! -L "$notes" && -s "$notes" ]] || die "missing release notes: docs/releases/${tag}.md"
+notes="$work/release-notes.md"
+git -C "$root" cat-file blob "$commit:docs/releases/${tag}.md" >"$notes" 2>/dev/null ||
+	die "missing release notes in $tag: docs/releases/${tag}.md"
+[[ -s "$notes" ]] || die "missing release notes in $tag: docs/releases/${tag}.md"
 files=()
 for want in "${expected[@]}"; do
 	files+=("$src/$want")

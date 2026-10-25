@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# Tag anchor: local object equals origin, GitHub verified/valid, ancestor of
+# origin/main, identity files byte-identical to origin/main.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd -P)"
+scratch="$(mktemp -d /tmp/shs-ta.XXXXXX)"
+scratch="$(CDPATH= cd -P -- "$scratch" && pwd -P)"
+trap 'rm -rf "$scratch"' EXIT
+
+fail() {
+	echo "FAIL: $*" >&2
+	exit 1
+}
+pass() { echo "PASS: $*"; }
+
+script="$root/scripts/release-verify-tag-anchor.sh"
+[[ -x "$script" ]] || fail 'release-verify-tag-anchor.sh must be executable'
+grep -q 'release-verify-tag-anchor.sh' "$root/scripts/release-create-draft.sh" ||
+	fail 'create-draft must verify the tag against origin and GitHub'
+grep -q 'release-verify-tag-anchor.sh' "$root/scripts/verify-signatures.sh" ||
+	fail 'verify-signatures must verify the tag against origin and GitHub'
+grep -E '^release-tag-tests:' -A50 "$root/Makefile" | grep -q 'test-release-verify-tag-anchor' ||
+	fail 'release-tag-tests must run test-release-verify-tag-anchor'
+pass 'create-draft and verify-signatures call the tag-anchor helper'
+
+tree="$scratch/tree"
+mkdir -p "$tree/scripts" "$tree/docs/security" "$tree/keys"
+cp "$script" "$tree/scripts/"
+chmod +x "$tree/scripts/"*.sh
+printf 'gpg AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nminisign %s\n' "$(printf 'a%.0s' {1..64})" \
+	>"$tree/keys/expected-fingerprints.txt"
+printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$tree/keys/expected-fingerprints.ndjson"
+printf 'good-gpg\n' >"$tree/docs/security/release-signing-keys.asc"
+printf 'good-minisign\n' >"$tree/docs/security/shellsentry-minisign.pub"
+printf 'notes\n' >"$tree/docs/security/placeholder"
+git init -q -b main "$tree"
+git -C "$tree" config user.name fixture
+git -C "$tree" config user.email fixture@example.invalid
+git -C "$tree" add docs keys scripts
+git -C "$tree" commit -qm fixture
+git -C "$tree" tag -a v1.2.3 -m 'fixture'
+object="$(git -C "$tree" rev-parse refs/tags/v1.2.3)"
+commit="$(git -C "$tree" rev-parse HEAD)"
+git init -q --bare "$scratch/origin.git"
+git -C "$scratch/origin.git" symbolic-ref HEAD refs/heads/main
+git -C "$tree" remote add origin "$scratch/origin.git"
+git -C "$tree" push -q origin HEAD:main
+git -C "$tree" push -q origin v1.2.3
+git -C "$tree" fetch -q origin
+git -C "$tree" update-ref refs/remotes/origin/main "$commit"
+
+mkdir -p "$scratch/bin"
+cat >"$scratch/bin/gh" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *git/ref/tags/* ]]; then
+	printf '{"object":{"type":"%s","sha":"%s"}}\n' "${REF_TYPE:-tag}" "${REF_SHA:?}"
+	exit 0
+fi
+if [[ "$*" == *'/git/tags/'* ]]; then
+	cat "$TAG_JSON"
+	exit 0
+fi
+echo "unhandled gh: $*" >&2
+exit 1
+SH
+chmod +x "$scratch/bin/gh"
+export PATH="$scratch/bin:$PATH"
+export REF_SHA="$object"
+export TAG_JSON="$scratch/tag.json"
+cat >"$TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$commit"},"verification":{"verified":true,"reason":"valid"}}
+JSON
+
+expect_fail() {
+	local msg="$1"
+	shift
+	if "$@" >/dev/null 2>"$scratch/err"; then
+		fail "expected refusal: $msg"
+	fi
+	grep -q "$msg" "$scratch/err" || fail "refusal for $msg (log: $(cat "$scratch/err"))"
+}
+
+if ! "$tree/scripts/release-verify-tag-anchor.sh" v1.2.3 >/dev/null; then
+	fail 'matching origin tag, GitHub verification, ancestry, and identity must pass'
+fi
+pass 'positive tag-anchor fixture verifies'
+
+other="$scratch/other"
+git clone -q "$scratch/origin.git" "$other"
+printf 'other\n' >"$other/other"
+git -C "$other" add other
+git -C "$other" -c user.name=x -c user.email=x@x commit -qm other
+git -C "$other" tag -a v9.9.9 -m other
+wrong_object="$(git -C "$other" rev-parse refs/tags/v9.9.9)"
+git -C "$other" push -q origin "refs/tags/v9.9.9:refs/tags/v1.2.3" --force
+expect_fail 'remote tag object differs from local tag' \
+	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
+git -C "$tree" push -q origin v1.2.3 --force
+pass 'remote tag object mismatch is refused'
+
+cat >"$TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$commit"},"verification":{"verified":false,"reason":"valid"}}
+JSON
+expect_fail 'GitHub does not report a verified tag' \
+	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
+cat >"$TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$commit"},"verification":{"verified":true,"reason":"unsigned"}}
+JSON
+expect_fail 'GitHub does not report a verified tag' \
+	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
+cat >"$TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$commit"},"verification":{"verified":true,"reason":"valid"}}
+JSON
+pass 'GitHub unverified and non-valid tags are refused'
+
+# Attacker commit: own keys and own signed/annotated tag, not on origin/main.
+attack="$scratch/attack"
+git clone -q -b main "$scratch/origin.git" "$attack"
+mkdir -p "$attack/scripts" "$attack/docs/security" "$attack/keys"
+cp "$script" "$attack/scripts/"
+chmod +x "$attack/scripts/"*.sh
+printf 'attacker-gpg\n' >"$attack/docs/security/release-signing-keys.asc"
+printf 'attacker-minisign\n' >"$attack/docs/security/shellsentry-minisign.pub"
+printf 'gpg BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\nminisign %s\n' "$(printf 'b%.0s' {1..64})" \
+	>"$attack/keys/expected-fingerprints.txt"
+git -C "$attack" add docs keys
+git -C "$attack" -c user.name=atk -c user.email=atk@example.invalid commit -qm attacker
+git -C "$attack" tag -d v1.2.3 >/dev/null
+git -C "$attack" tag -a v1.2.3 -m attacker
+attack_object="$(git -C "$attack" rev-parse refs/tags/v1.2.3)"
+attack_commit="$(git -C "$attack" rev-parse HEAD)"
+git -C "$attack" remote remove origin
+git init -q --bare "$scratch/attack-origin.git"
+git -C "$attack" remote add origin "$scratch/attack-origin.git"
+git -C "$attack" push -q origin "$attack_commit:refs/heads/not-main"
+git -C "$attack" push -q origin v1.2.3
+git -C "$attack" fetch -q origin
+# origin/main stays at the good commit if we set it from the original origin.
+git -C "$attack" update-ref refs/remotes/origin/main "$commit"
+export REF_SHA="$attack_object"
+cat >"$TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$attack_commit"},"verification":{"verified":true,"reason":"valid"}}
+JSON
+expect_fail 'tagged commit is not an ancestor of origin/main' \
+	"$attack/scripts/release-verify-tag-anchor.sh" v1.2.3
+python3 - "$script" "$attack/scripts/release-verify-tag-anchor.sh" <<'PY' || fail 'ancestor mutant was not distinguished'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'git -C "$root" merge-base --is-ancestor "$commit" origin/main ||'
+new = 'true ||'
+if old not in text:
+    raise SystemExit('live script is missing the ancestor check')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('ancestor mutant still checks ancestry')
+# Identity still differs on every pin file; skip those compares too.
+ident = '[[ "$tagged_blob" == "$main_blob" ]] ||'
+if ident not in mut:
+    raise SystemExit('live script is missing the identity compare')
+mut = mut.replace(ident, 'true ||')
+if ident in mut:
+    raise SystemExit('identity mutant still compares blobs')
+Path(sys.argv[2]).write_text(mut)
+PY
+chmod +x "$attack/scripts/release-verify-tag-anchor.sh"
+if ! "$attack/scripts/release-verify-tag-anchor.sh" v1.2.3 >/dev/null 2>"$scratch/mut-attack.err"; then
+	fail "dropping ancestor and identity checks must accept the attacker tag (log: $(cat "$scratch/mut-attack.err"))"
+fi
+cp "$script" "$attack/scripts/release-verify-tag-anchor.sh"
+chmod +x "$attack/scripts/release-verify-tag-anchor.sh"
+pass 'attacker commit with its own keys and tag is refused'
+
+# Identity files on the tagged commit differ from origin/main (tag is still an ancestor).
+printf 'rotated-minisign\n' >"$tree/docs/security/shellsentry-minisign.pub"
+git -C "$tree" add docs/security/shellsentry-minisign.pub
+git -C "$tree" commit -qm rotate
+git -C "$tree" push -q origin HEAD:main
+git -C "$tree" fetch -q origin
+export REF_SHA="$object"
+cat >"$TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$commit"},"verification":{"verified":true,"reason":"valid"}}
+JSON
+expect_fail 'identity file docs/security/shellsentry-minisign.pub on v1.2.3 differs from origin/main' \
+	"$tree/scripts/release-verify-tag-anchor.sh" v1.2.3
+pass 'identity mismatch versus origin/main is refused'
+
+python3 - "$script" <<'PY' || fail 'tag-anchor source checks missing'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+for needle in (
+    'ls-remote origin',
+    'verification',
+    'merge-base --is-ancestor',
+    'origin/main',
+    'expected-fingerprints.txt',
+    'release-signing-keys.asc',
+):
+    if needle not in text:
+        raise SystemExit('missing ' + needle)
+PY
+pass 'tag-anchor source includes remote, GitHub, ancestor, and identity checks'
+
+echo '[ok] tag-anchor refuses remote mismatch, unverified GitHub, attacker commit, and identity drift'

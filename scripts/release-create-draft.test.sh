@@ -59,13 +59,11 @@ grep -q 'does not list exactly the expected archives' "$script" ||
 	fail 'release-create-draft.sh must verify checksum listings'
 grep -q 'minisign -V' "$script" || fail 'release-create-draft.sh must verify minisign signatures'
 grep -q 'VALIDSIG' "$script" || fail 'release-create-draft.sh must verify GPG signatures'
-grep -q 'main.version=' "$script" || fail 'release-create-draft.sh must bind archives to the tag version'
-grep -q 'main.gitCommit=' "$script" || fail 'release-create-draft.sh must bind archives to the tagged commit'
-if grep -Fq 'left = i == 0 or data[i - 1] == 0' "$script"; then
-	fail 'archive bind must not require a leading NUL (Mach-O gitCommit has none)'
-fi
-grep -Fq 'data[i + len(needle)] == 0' "$script" ||
-	fail 'archive bind must require a trailing NUL so a short hash is not a vcs.revision prefix'
+grep -q 'vcs.revision' "$script" || fail 'release-create-draft.sh must bind archives via go version -m vcs.revision'
+grep -q 'delimited' "$script" || fail 'release-create-draft.sh must bind ldflag strings with left and right boundaries'
+grep -q 'release-verify-tag-anchor.sh' "$script" || fail 'release-create-draft.sh must verify the tag against origin'
+grep -q 'cat-file blob "$commit:docs/releases/' "$script" ||
+	fail 'release-create-draft.sh must read release notes from the tagged commit'
 grep -q 'mktemp -d /tmp/shs-cd.XXXXXX' "$script" || fail 'create-draft work dir must be a short /tmp path'
 if grep -nE 'mktemp -d "\$\{TMPDIR' "$script"; then
 	fail 'create-draft GPG homes must not be created under TMPDIR'
@@ -155,9 +153,12 @@ git -C "$fixture" config gpg.program gpg
 git -C "$fixture" config commit.gpgsign false
 git -C "$fixture" config user.name '3 Leaps Infosec Team'
 git -C "$fixture" config user.email 'infosec@3leaps.net'
-mkdir -p "$fixture/docs/security" "$fixture/docs/releases" "$fixture/scripts"
-cp "$script" "$root/scripts/release-ci-refuse.sh" "$fixture/scripts/"
+mkdir -p "$fixture/docs/security" "$fixture/docs/releases" "$fixture/scripts" "$fixture/keys"
+cp "$script" "$root/scripts/release-ci-refuse.sh" "$root/scripts/release-verify-tag-anchor.sh" \
+	"$fixture/scripts/"
 chmod +x "$fixture/scripts/"*.sh
+cp -a "$root/internal" "$fixture/"
+cp "$root/main.go" "$root/go.mod" "$root/go.sum" "$fixture/"
 fixture_script="$fixture/scripts/release-create-draft.sh"
 restore_draft() {
 	cp "$script" "$fixture_script"
@@ -166,34 +167,52 @@ restore_draft() {
 gpg --batch --armor --export "$primary" >"$fixture/docs/security/release-signing-keys.asc"
 cp "$scratch/good.pub" "$fixture/docs/security/shellsentry-minisign.pub"
 printf 'notes for v1.2.3\n' >"$fixture/docs/releases/v1.2.3.md"
-git -C "$fixture" add docs scripts
+blob="$(python3 -c 'import base64,hashlib,pathlib,sys; print(hashlib.sha256(base64.b64decode(pathlib.Path(sys.argv[1]).read_text().splitlines()[1])).hexdigest())' "$scratch/good.pub")"
+printf 'gpg %s\nminisign %s\n' "$primary" "$blob" >"$fixture/keys/expected-fingerprints.txt"
+printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$fixture/keys/expected-fingerprints.ndjson"
+git -C "$fixture" add docs keys scripts internal main.go go.mod go.sum
 git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
+full="$(git -C "$fixture" rev-parse HEAD)"
 short="$(git -C "$fixture" rev-parse --short HEAD)"
 GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
 	git -C "$fixture" -c gpg.format=openpgp tag -s -a --cleanup=verbatim \
 	-u "$subkey!" -m 'shellsentry v1.2.3'$'\n' v1.2.3 HEAD ||
 	fail 'signed fixture tag failed'
+git init -q --bare "$scratch/origin.git"
+git -C "$fixture" remote add origin "$scratch/origin.git"
+git -C "$fixture" push -q origin HEAD:main
+git -C "$fixture" push -q origin v1.2.3
+git -C "$fixture" fetch -q origin
 
 go_build() {
 	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
 		CGO_ENABLED=0 go build "$@"
 }
 mkdir -p "$scratch/bin"
-(cd "$root" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${short}" \
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
 	-o "$scratch/bin/shellsentry" .)
 [[ -s "$scratch/bin/shellsentry" ]] || fail 'fixture binary missing'
-(cd "$root" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${short}" \
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full}" \
 	-o "$scratch/bin/wrong-version" .)
-(cd "$root" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=deadbee" \
+(cd "$fixture" && go_build -buildvcs=false -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=deadbee000000000000000000000000000000000" \
 	-o "$scratch/bin/wrong-commit" .)
-# Real darwin Mach-O: the -X gitCommit string is not leading-NUL-terminated.
-(cd "$root" && GOOS=darwin GOARCH=arm64 go_build -trimpath \
-	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${short}" \
+(cd "$fixture" && GOOS=darwin GOARCH=arm64 go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
 	-o "$scratch/bin/shellsentry-darwin" .)
 [[ -s "$scratch/bin/shellsentry-darwin" ]] || fail 'darwin fixture binary missing'
+(cd "$fixture" && go_build -buildvcs=false -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=zz${short}" \
+	-o "$scratch/bin/forged-zz" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=11.2.3 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/forged-version" .)
+(cd "$fixture" && go_build -buildvcs=false -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=cafebabeface0000000000000000000000000000 -X main.buildTime=${full}" \
+	-o "$scratch/bin/forged-buildtime" .)
+printf 'working-tree notes must not be used\n' >"$fixture/docs/releases/v1.2.3.md"
 
 pack_from() {
 	local binary="$1" dest="$2" darwin="${3:-$1}"
@@ -263,6 +282,13 @@ sign_dir "$scratch/dist"
 mkdir -p "$scratch/bin-path"
 export GH_TRACE="$scratch/trace"
 : >"$GH_TRACE"
+tag_object="$(git -C "$fixture" rev-parse refs/tags/v1.2.3)"
+export GH_TAG_OBJECT="$tag_object"
+export GH_TAG_COMMIT="$full"
+export GH_TAG_JSON="$scratch/tag.json"
+cat >"$GH_TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$full"},"verification":{"verified":true,"reason":"valid"}}
+JSON
 cat >"$scratch/bin-path/gh" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GH_TRACE}"
@@ -272,6 +298,19 @@ case "$*" in
     ;;
   *'release create'*)
     printf '%s\n' "$*" >"${GH_TRACE}.create"
+    prev=""
+    for arg in "$@"; do
+      if [[ "$prev" == --notes-file ]]; then
+        cp "$arg" "${GH_TRACE}.notes"
+      fi
+      prev="$arg"
+    done
+    ;;
+  *git/ref/tags/*)
+    printf '{"object":{"type":"tag","sha":"%s"}}\n' "${GH_TAG_OBJECT:?}"
+    ;;
+  *'/git/tags/'*)
+    cat "${GH_TAG_JSON:?}"
     ;;
   *)
     exit 0
@@ -302,6 +341,16 @@ if grep -nE -- '--draft=false|draft=false' "$GH_TRACE.create"; then
 fi
 grep -q 'SHA256SUMS.minisig' "$GH_TRACE.create" || fail 'draft must upload minisign signatures'
 grep -q 'SHA256SUMS.asc' "$GH_TRACE.create" || fail 'draft must upload GPG signatures'
+grep -q 'release-notes.md' "$GH_TRACE.create" || fail 'draft must pass notes extracted from the tagged commit'
+if grep -q "$fixture/docs/releases" "$GH_TRACE.create"; then
+	fail 'draft must not read release notes from the working tree'
+fi
+[[ -s "$GH_TRACE.notes" ]] || fail 'gh stub must record the notes file'
+grep -qx 'notes for v1.2.3' "$GH_TRACE.notes" ||
+	fail "notes must come from the tagged commit (got: $(cat "$GH_TRACE.notes"))"
+if grep -q 'working-tree notes must not be used' "$GH_TRACE.notes"; then
+	fail 'draft must not read release notes from the working tree'
+fi
 pass "create-draft opens a verified draft from real signed packages"
 
 : >"$GH_TRACE"
@@ -377,6 +426,46 @@ fi
 restore_draft
 pass 'reverting checksum listing accepts an omitted archive'
 
+omit512="$scratch/omit512"
+cp -a "$scratch/dist" "$omit512"
+python3 - "$omit512/SHA512SUMS" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+lines = [ln for ln in p.read_text().splitlines() if 'darwin_arm64' not in ln]
+p.write_text('\n'.join(lines) + '\n')
+PY
+sign_dir "$omit512"
+if run_draft "$omit512" >/dev/null 2>"$scratch/omit512.err"; then
+	fail 'create-draft must refuse a SHA512 manifest that omits a staged archive'
+fi
+grep -q 'exactly the expected archives' "$scratch/omit512.err" ||
+	fail "SHA512 omit-from-manifest refusal (log: $(cat "$scratch/omit512.err"))"
+pass 'create-draft refuses a SHA512 manifest that omits a staged archive'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = "for manifest, algorithm, width in (('SHA256SUMS', 'sha256', 64), ('SHA512SUMS', 'sha512', 128)):"
+new = "for manifest, algorithm, width in (('SHA256SUMS', 'sha256', 64),):"
+if old not in text:
+    raise SystemExit('live script is missing the SHA512 checksum pass')
+mut = text.replace(old, new, 1)
+if 'SHA512SUMS' in mut.split('bind_archive', 1)[0] and old in mut:
+    raise SystemExit('SHA512 checksum mutant still lists SHA512SUMS')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'SHA512 checksum mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$omit512" >/dev/null 2>"$scratch/mut-sha512.err"; then
+	fail "dropping the SHA512 listing check must accept an incomplete SHA512SUMS (log: $(cat "$scratch/mut-sha512.err"))"
+fi
+restore_draft
+pass 'reverting the SHA512 listing check accepts an omitted archive'
+
 mismatch="$scratch/mismatch"
 cp -a "$scratch/dist" "$mismatch"
 python3 - "$mismatch/SHA256SUMS" <<'PY'
@@ -429,6 +518,39 @@ fi
 restore_draft
 pass 'reverting minisign verification accepts a wrong-key signature'
 
+bad_ms512="$scratch/bad-minisig-512"
+cp -a "$scratch/dist" "$bad_ms512"
+minisign -S -s "$scratch/bad.key" -m "$bad_ms512/SHA512SUMS" -x "$bad_ms512/SHA512SUMS.minisig" >/dev/null
+if run_draft "$bad_ms512" >/dev/null 2>"$scratch/bad-ms512.err"; then
+	fail 'create-draft must refuse a SHA512 minisign signature from the wrong key'
+fi
+grep -q 'minisign signature' "$scratch/bad-ms512.err" ||
+	fail "bad SHA512 minisign refusal (log: $(cat "$scratch/bad-ms512.err"))"
+pass 'create-draft refuses a wrong SHA512 minisign key'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'verify_minisign SHA512SUMS\n'
+new = 'true\n'
+if old not in text:
+    raise SystemExit('live script is missing SHA512 minisign verify')
+mut = text.replace(old, new, 1)
+if 'verify_minisign SHA512SUMS' in mut:
+    raise SystemExit('SHA512 minisign mutant still verifies')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'SHA512 minisign mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$bad_ms512" >/dev/null 2>"$scratch/mut-ms512.err"; then
+	fail "dropping SHA512 minisign verify must accept the wrong key (log: $(cat "$scratch/mut-ms512.err"))"
+fi
+restore_draft
+pass 'reverting SHA512 minisign verification accepts a wrong-key signature'
+
 bad_gpg="$scratch/bad-gpg"
 cp -a "$scratch/dist" "$bad_gpg"
 other_gpg --batch --yes --armor --local-user "$other_subkey!" \
@@ -471,6 +593,40 @@ if ! "$fixture_script" v1.2.3 "$bad_gpg" >/dev/null 2>"$scratch/mut-gpg.err"; th
 fi
 restore_draft
 pass 'reverting GPG verification accepts a wrong-key signature'
+
+bad_gpg512="$scratch/bad-gpg-512"
+cp -a "$scratch/dist" "$bad_gpg512"
+other_gpg --batch --yes --armor --local-user "$other_subkey!" \
+	--detach-sign -o "$bad_gpg512/SHA512SUMS.asc" "$bad_gpg512/SHA512SUMS"
+if run_draft "$bad_gpg512" >/dev/null 2>"$scratch/bad-gpg512.err"; then
+	fail 'create-draft must refuse a SHA512 GPG signature from the wrong key'
+fi
+grep -Eq 'PGP signature|committed' "$scratch/bad-gpg512.err" ||
+	fail "bad SHA512 GPG refusal (log: $(cat "$scratch/bad-gpg512.err"))"
+pass 'create-draft refuses a wrong SHA512 GPG key'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'verify_pgp SHA512SUMS\n'
+new = 'true\n'
+if old not in text:
+    raise SystemExit('live script is missing SHA512 GPG verify')
+mut = text.replace(old, new, 1)
+if 'verify_pgp SHA512SUMS' in mut:
+    raise SystemExit('SHA512 GPG mutant still verifies')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'SHA512 GPG mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$bad_gpg512" >/dev/null 2>"$scratch/mut-gpg512.err"; then
+	fail "dropping SHA512 GPG verify must accept the wrong key (log: $(cat "$scratch/mut-gpg512.err"))"
+fi
+restore_draft
+pass 'reverting SHA512 GPG verification accepts a wrong-key signature'
 
 missing_sig="$scratch/missing-sig"
 cp -a "$scratch/dist" "$missing_sig"
@@ -524,6 +680,247 @@ fi
 grep -q 'not bound to signed tag' "$scratch/wrong-commit.err" ||
 	fail "wrong-commit refusal (log: $(cat "$scratch/wrong-commit.err"))"
 pass 'create-draft refuses a wrong-commit binary'
+
+forged_zz="$scratch/forged-zz"
+pack_from "$scratch/bin/forged-zz" "$forged_zz"
+sign_dir "$forged_zz"
+if run_draft "$forged_zz" >/dev/null 2>"$scratch/forged-zz.err"; then
+	fail 'create-draft must refuse gitCommit=zz<short> as a tag bind'
+fi
+grep -q 'not bound to signed tag' "$scratch/forged-zz.err" ||
+	fail "forged-zz refusal (log: $(cat "$scratch/forged-zz.err"))"
+pass 'create-draft refuses gitCommit=zz<short>'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''	if ! python3 - "$bin" "$version" "$commit" "$info" <<'PY'
+from pathlib import Path
+import sys
+
+data = Path(sys.argv[1]).read_bytes()
+version, full_commit, info = sys.argv[2], sys.argv[3], sys.argv[4]
+'''
+new = '''	short="$(git -C "$root" rev-parse --short "$commit")"
+	if ! python3 - "$bin" "$version" "$short" <<'PY'
+from pathlib import Path
+import sys
+
+data = Path(sys.argv[1]).read_bytes()
+version, commit = sys.argv[2], sys.argv[3]
+
+def has_injected(value: str) -> bool:
+    needle = value.encode("ascii")
+    start = 0
+    while True:
+        i = data.find(needle, start)
+        if i < 0:
+            return False
+        right = i + len(needle) == len(data) or data[i + len(needle)] == 0
+        if right:
+            return True
+        start = i + 1
+
+if not has_injected(version):
+    raise SystemExit("error: archive is not bound to tag version " + version)
+if not has_injected(commit):
+    raise SystemExit("error: archive is not bound to tagged commit " + commit)
+raise SystemExit(0)
+version, full_commit, info = sys.argv[2], sys.argv[3], sys.argv[4]
+'''
+if old not in text:
+    raise SystemExit('live script is missing the vcs.revision bind')
+mut = text.replace(old, new, 1)
+if 'rev-parse --short' not in mut:
+    raise SystemExit('zz mutant did not switch to a short commit bind')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'forged-zz mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$forged_zz" >/dev/null 2>"$scratch/mut-zz.err"; then
+	fail "restoring a 7-char right-NUL bind must accept gitCommit=zz<short> (log: $(cat "$scratch/mut-zz.err"))"
+fi
+restore_draft
+pass 'reverting to a 7-char right-NUL bind accepts gitCommit=zz<short>'
+
+forged_ver="$scratch/forged-version"
+pack_from "$scratch/bin/forged-version" "$forged_ver"
+sign_dir "$forged_ver"
+if run_draft "$forged_ver" >/dev/null 2>"$scratch/forged-ver.err"; then
+	fail 'create-draft must refuse version=11.2.3 for tag 1.2.3'
+fi
+grep -q 'not bound to signed tag' "$scratch/forged-ver.err" ||
+	fail "forged-version refusal (log: $(cat "$scratch/forged-ver.err"))"
+pass 'create-draft refuses version=11.2.3 for tag 1.2.3'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '            left_ok = i == 0 or not (48 <= data[i - 1] <= 57)'
+new = '            left_ok = True'
+if old not in text:
+    raise SystemExit('live script is missing the version left-boundary check')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('version-boundary mutant still checks the left digit')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'forged-version mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$forged_ver" >/dev/null 2>"$scratch/mut-ver.err"; then
+	fail "dropping the version left boundary must accept 11.2.3 (log: $(cat "$scratch/mut-ver.err"))"
+fi
+restore_draft
+pass 'reverting the version left boundary accepts 11.2.3'
+
+forged_bt="$scratch/forged-buildtime"
+pack_from "$scratch/bin/forged-buildtime" "$forged_bt"
+sign_dir "$forged_bt"
+if run_draft "$forged_bt" >/dev/null 2>"$scratch/forged-bt.err"; then
+	fail 'create-draft must refuse a tagged-commit hash placed only in buildTime'
+fi
+grep -q 'not bound to signed tag' "$scratch/forged-bt.err" ||
+	fail "forged-buildtime refusal (log: $(cat "$scratch/forged-bt.err"))"
+pass 'create-draft refuses a tagged-commit hash placed only in buildTime'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if vcs_revision != full_commit:
+    raise SystemExit("error: archive vcs.revision is not the tagged commit")
+if vcs_modified != "false":
+    raise SystemExit("error: archive vcs.modified is not false")
+'''
+new = '''if vcs_revision is not None and vcs_revision != full_commit:
+    raise SystemExit("error: archive vcs.revision is not the tagged commit")
+if vcs_revision is None and not delimited(full_commit):
+    raise SystemExit("error: archive is not bound to tagged commit " + full_commit)
+'''
+if old not in text:
+    raise SystemExit('live script does not require vcs.revision')
+mut = text.replace(old, new, 1)
+if 'if vcs_revision != full_commit:' in mut:
+    raise SystemExit('buildTime mutant still requires vcs.revision')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'forged-buildtime mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$forged_bt" >/dev/null 2>"$scratch/mut-bt.err"; then
+	fail "falling back to a delimited hash must accept buildTime=${full} (log: $(cat "$scratch/mut-bt.err"))"
+fi
+restore_draft
+pass 'reverting vcs.revision to a delimited-hash fallback accepts buildTime'
+
+nongo="$scratch/nongo"
+python3 - "$nongo" "$root/scripts/install-shellsentry.sh" <<'PY'
+import hashlib
+import io
+import pathlib
+import sys
+import tarfile
+import zipfile
+
+dest = pathlib.Path(sys.argv[1])
+dest.mkdir(parents=True)
+installer_src = pathlib.Path(sys.argv[2])
+payload = b"#!/bin/sh\n# not a Go binary\nversion 1.2.3\x00"
+for name in (
+    "shellsentry_linux_amd64.tar.gz",
+    "shellsentry_linux_arm64.tar.gz",
+    "shellsentry_darwin_arm64.tar.gz",
+):
+    with tarfile.open(dest / name, "w:gz") as tf:
+        info = tarfile.TarInfo("shellsentry")
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+for name in (
+    "shellsentry_windows_amd64.zip",
+    "shellsentry_windows_arm64.zip",
+):
+    with zipfile.ZipFile(dest / name, "w") as zf:
+        zf.writestr("shellsentry.exe", payload)
+(dest / "install-shellsentry.sh").write_bytes(installer_src.read_bytes())
+packages = [
+    "shellsentry_linux_amd64.tar.gz",
+    "shellsentry_linux_arm64.tar.gz",
+    "shellsentry_windows_amd64.zip",
+    "shellsentry_windows_arm64.zip",
+    "shellsentry_darwin_arm64.tar.gz",
+    "install-shellsentry.sh",
+]
+for manifest, algo in (("SHA256SUMS", "sha256"), ("SHA512SUMS", "sha512")):
+    lines = []
+    for name in packages:
+        digest = hashlib.new(algo, (dest / name).read_bytes()).hexdigest()
+        lines.append(f"{digest}  {name}")
+    (dest / manifest).write_text("\n".join(lines) + "\n")
+PY
+sign_dir "$nongo"
+if run_draft "$nongo" >/dev/null 2>"$scratch/nongo.err"; then
+	fail 'create-draft must refuse a non-Go binary'
+fi
+grep -q 'is not a Go binary' "$scratch/nongo.err" ||
+	fail "non-Go refusal (log: $(cat "$scratch/nongo.err"))"
+pass 'create-draft refuses a non-Go binary'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'info="$(go version -m "$bin" 2>/dev/null)" || die "$archive is not a Go binary"'
+new = 'info="$(go version -m "$bin" 2>/dev/null)" || info=$\'build\\tvcs.revision=\'"$commit"$\'\\nbuild\\tvcs.modified=false\''
+if old not in text:
+    raise SystemExit('live script is missing the is-Go-binary check')
+mut = text.replace(old, new, 1)
+if 'is not a Go binary' in mut:
+    raise SystemExit('non-Go mutant still dies on go version -m')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'non-Go mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+if ! "$fixture_script" v1.2.3 "$nongo" >/dev/null 2>"$scratch/mut-nongo.err"; then
+	fail "dropping the is-Go-binary check must accept a shell script payload (log: $(cat "$scratch/mut-nongo.err"))"
+fi
+restore_draft
+pass 'reverting the is-Go-binary check accepts a non-Go archive'
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'git -C "$root" cat-file blob "$commit:docs/releases/${tag}.md" >"$notes" 2>/dev/null ||'
+new = 'cp "$root/docs/releases/${tag}.md" "$notes" 2>/dev/null ||'
+if old not in text:
+    raise SystemExit('live script does not read notes from the tagged commit')
+mut = text.replace(old, new, 1)
+if 'cat-file blob "$commit:docs/releases/' in mut:
+    raise SystemExit('notes mutant still reads the tagged blob')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'working-tree notes mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+: >"$GH_TRACE"
+rm -f "$GH_TRACE.create" "$GH_TRACE.notes"
+if ! "$fixture_script" v1.2.3 "$scratch/dist" >/dev/null 2>"$scratch/mut-notes.err"; then
+	fail "reading notes from the working tree must still create a draft (log: $(cat "$scratch/mut-notes.err"))"
+fi
+grep -q 'working-tree notes must not be used' "$GH_TRACE.notes" ||
+	fail "working-tree notes mutant did not upload dirty notes (got: $(cat "$GH_TRACE.notes" 2>/dev/null))"
+restore_draft
+pass 'reverting notes to the working tree uploads dirty release notes'
 
 git -C "$fixture" tag -d v1.2.3 >/dev/null
 git -C "$fixture" tag -a -m 'unsigned' v1.2.3 HEAD

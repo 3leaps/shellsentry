@@ -89,6 +89,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: test-release-tag-operator test-release-prepare-tag-message test-release-tag-controls
 .PHONY: test-release-verify-remote-tag test-release-push-tag
 .PHONY: test-release-decernor test-release-stage-tagged-pubkeys test-release-verify-staged-keys test-verify-signatures
+.PHONY: test-release-verify-tag-anchor
 .PHONY: test-ci-install-decernor test-release-verify-committed-anchors
 .PHONY: release-insert-anchors release-verify-committed-anchors
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
@@ -473,8 +474,11 @@ test-release-decernor: ## Regression: ceremony binds Decernor by SHELLSENTRY_DEC
 test-release-stage-tagged-pubkeys: ## Regression: public keys stage from the tagged commit
 	@./scripts/release-stage-tagged-pubkeys.test.sh
 
-test-release-verify-staged-keys: ## Regression: staged keys must match committed anchors
+test-release-verify-staged-keys: ## Regression: staged keys must match tagged-commit anchors
 	@./scripts/release-verify-staged-keys.test.sh
+
+test-release-verify-tag-anchor: ## Regression: tag must match origin, GitHub, origin/main, and identity
+	@./scripts/release-verify-tag-anchor.test.sh
 
 test-verify-signatures: ## Regression: signatures verify with tagged-commit keys only
 	@./scripts/verify-signatures.test.sh
@@ -514,6 +518,7 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-release-stage-tagged-pubkeys
 	@$(MAKE) test-release-verify-staged-keys
 	@$(MAKE) test-verify-signatures
+	@$(MAKE) test-release-verify-tag-anchor
 	@echo "[ok] Release tag tooling tests passed"
 
 release-notes: require-release-tag ## Copy release notes into dist/release
@@ -568,9 +573,9 @@ release-verify-minisign-pubkey: build ## Verify minisign public key matches embe
 		exit 1; \
 	fi
 
-release-verify-keys: ## Verify committed anchors, then both staged public keys against those anchors
+release-verify-keys: require-release-tag ## Verify committed anchors, then staged keys against the tagged commit
 	@./scripts/release-verify-committed-anchors.sh
-	@./scripts/release-verify-staged-keys.sh $(DIST_RELEASE)
+	@./scripts/release-verify-staged-keys.sh "$(SHELLSENTRY_RELEASE_TAG)" $(DIST_RELEASE)
 
 release-verify-signatures: require-release-tag ## Verify minisign and PGP signatures with tagged-commit keys
 	@./scripts/verify-signatures.sh "$(SHELLSENTRY_RELEASE_TAG)" "$(DIST_RELEASE)"
