@@ -58,6 +58,35 @@ export SHELLSENTRY_PGP_KEY_ID=0123456789ABCDEF
 expect_fail tag_selector_shape
 unset SHELLSENTRY_PGP_KEY_ID
 expect_fail tag_selector_shape
+# Trailing ! is required. A 40-hex fingerprint without it must be refused.
+export SHELLSENTRY_PGP_KEY_ID=0123456789ABCDEF0123456789ABCDEF01234567
+export SHELLSENTRY_GPG_SIGNING_FINGERPRINT=FEDCBA9876543210FEDCBA9876543210FEDCBA98
+expect_fail tag_selector_shape
+if ! python3 - "$root/scripts/release-tag-common.sh" "$scratch/optional-bang-common.sh" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old, new = r'^[0-9A-F]{40}!$', r'^[0-9A-F]{40}!?$'
+if old not in text:
+    raise SystemExit('live selector regex with required ! is missing')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('mutant still requires a trailing !')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	echo 'error: optional-bang mutant was not distinguished' >&2
+	exit 1
+fi
+(
+	# shellcheck disable=SC1091
+	source "$scratch/optional-bang-common.sh"
+	tag_selector_shape
+) || {
+	echo 'error: optional-bang mutant must accept a 40-hex selector without !' >&2
+	exit 1
+}
+unset SHELLSENTRY_PGP_KEY_ID SHELLSENTRY_GPG_SIGNING_FINGERPRINT
 git init -q -b main "$scratch/repo"
 git -C "$scratch/repo" config user.name fixture
 git -C "$scratch/repo" config user.email fixture@example.invalid

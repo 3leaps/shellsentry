@@ -46,7 +46,8 @@ for invalid in 1.2.3 vv1.2.3 "v1.2.3 " v1.2.3-rc.1 v1.2.3+build; do
 done
 expect_fail run_guard SHELLSENTRY_RELEASE_TAG=v1.2.4 ./guard.sh
 expect_fail run_guard RELEASE_TAG=v1.2.3 SHELLSENTRY_RELEASE_TAG=v1.2.3 ./guard.sh
-expect_fail run_guard SHELLSENTRY_RELEASE_KEY=v1.2.3 SHELLSENTRY_RELEASE_TAG=v1.2.3 ./guard.sh
+# SHELLSENTRY_RELEASE_KEY is not a tag alias; setting it must not fail the guard.
+run_guard SHELLSENTRY_RELEASE_KEY=v1.2.3 SHELLSENTRY_RELEASE_TAG=v1.2.3 ./guard.sh >/dev/null
 expect_fail run_guard SHELLSENTRY_RELEASE_TAG=v1.2.3 \
 	SHELLSENTRY_REQUIRE_TAG=1 ./guard.sh
 

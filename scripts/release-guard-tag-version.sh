@@ -8,7 +8,7 @@ main() {
 	root="$(git rev-parse --show-toplevel)"
 	cd "$root"
 
-	if [[ -n "${RELEASE_TAG+x}" || -n "${SHELLSENTRY_RELEASE_KEY+x}" ]]; then
+	if [[ -n "${RELEASE_TAG+x}" ]]; then
 		echo "error: generic or legacy release tag aliases are forbidden" >&2
 		exit 1
 	fi

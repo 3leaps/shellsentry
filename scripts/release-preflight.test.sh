@@ -35,23 +35,28 @@ printf 'tracked\n' >"$fixture/file"
 git -C "$fixture" add VERSION config docs keys CHANGELOG.md RELEASE_NOTES.md file scripts
 git -C "$fixture" commit -qm fixture
 
-env -u SHELLSENTRY_RELEASE_TAG -u RELEASE_TAG -C "$fixture" ./scripts/release-preflight.sh >/dev/null
+pf="$fixture/scripts/release-preflight.sh"
+
+expect_fail env -u SHELLSENTRY_RELEASE_TAG -u RELEASE_TAG "$pf"
+grep -q 'SHELLSENTRY_RELEASE_TAG required' "$scratch/err"
+
+env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 "$pf" >/dev/null
 
 printf 'dirty\n' >"$fixture/file"
-expect_fail env -C "$fixture" ./scripts/release-preflight.sh
+expect_fail env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 "$pf"
 grep -q 'working tree is not clean' "$scratch/err"
 git -C "$fixture" checkout -q -- file
 
-expect_fail env -C "$fixture" RELEASE_TAG=v0.1.8 ./scripts/release-preflight.sh
+expect_fail env -u SHELLSENTRY_RELEASE_TAG RELEASE_TAG=v0.1.8 "$pf"
 grep -q 'RELEASE_TAG is not accepted' "$scratch/err"
 
-expect_fail env -C "$fixture" SHELLSENTRY_RELEASE_TAG=v0.0.0 ./scripts/release-preflight.sh
+expect_fail env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.0.0 "$pf"
 grep -q 'must equal v0.1.8' "$scratch/err"
 
 printf 'wrong identity\n' >"$fixture/config/release/tagger-identity.txt"
 git -C "$fixture" add config/release/tagger-identity.txt
 git -C "$fixture" commit -qm 'wrong identity'
-expect_fail env -C "$fixture" ./scripts/release-preflight.sh
+expect_fail env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 "$pf"
 grep -q 'tagger identity must be' "$scratch/err"
 git -C "$fixture" checkout -q HEAD~1 -- config/release/tagger-identity.txt
 git -C "$fixture" commit -qm 'restore identity'
@@ -59,7 +64,7 @@ git -C "$fixture" commit -qm 'restore identity'
 rm "$fixture/docs/releases/v0.1.8.md"
 git -C "$fixture" add -A
 git -C "$fixture" commit -qm 'drop notes'
-expect_fail env -C "$fixture" ./scripts/release-preflight.sh
+expect_fail env -u RELEASE_TAG SHELLSENTRY_RELEASE_TAG=v0.1.8 "$pf"
 grep -q 'docs/releases/v0.1.8.md is missing' "$scratch/err"
 
 echo '[ok] release preflight controls passed'

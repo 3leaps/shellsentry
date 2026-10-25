@@ -54,7 +54,7 @@ if 'git describe' not in mut:
 PY
 pass "stale prefixed alias and git describe fallback are distinguished"
 
-for target in release-guard-tag-version release-prepare-tag-message release-tag \
+for target in release-preflight release-guard-tag-version release-prepare-tag-message release-tag \
 	release-push-tag release-verify-tag release-verify-remote-tag \
 	release-publish release-download release-notes release-sign release-upload; do
 	grep -E "^${target}: require-release-tag" Makefile >/dev/null ||
@@ -68,7 +68,6 @@ grep -E '^release-verify-tag: require-release-tag' -A2 Makefile | grep -q 'verif
 	fail "release-verify-tag must invoke scripts/verify-pinned-tag.sh"
 grep -E '^release-verify-remote-tag: require-release-tag' -A2 Makefile | grep -q 'release-verify-remote-tag.sh' ||
 	fail "release-verify-remote-tag must invoke scripts/release-verify-remote-tag.sh"
-grep -E '^release-preflight:' Makefile >/dev/null || fail "release-preflight target missing"
 pass "ceremony targets depend on require-release-tag"
 
 # Mutant: dropping the tag guard from release-tag must fail this check.
@@ -83,6 +82,18 @@ if re.search(r'^release-tag: require-release-tag', mut, re.M):
     raise SystemExit('mutant still has require-release-tag')
 PY
 pass "grep rejects a release-tag without require-release-tag"
+
+python3 - "$ROOT/Makefile" <<'PY' || fail "release-preflight require-release-tag mutant was not distinguished"
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+m = re.search(r'^release-preflight:.*', text, re.M)
+if not m or 'require-release-tag' not in m.group(0):
+    raise SystemExit('live release-preflight missing require-release-tag')
+mut = re.sub(r'^release-preflight: require-release-tag', 'release-preflight:', text, count=1, flags=re.M)
+if re.search(r'^release-preflight: require-release-tag', mut, re.M):
+    raise SystemExit('mutant still has require-release-tag on release-preflight')
+PY
+pass "grep rejects a release-preflight without require-release-tag"
 
 file_version="$(tr -d ' \n' <VERSION)"
 
@@ -131,5 +142,12 @@ fi
 grep -q 'SHELLSENTRY_RELEASE_TAG required' "$scratch/tag-missing.out" ||
 	fail "release-tag missing-tag refusal (log: $(cat "$scratch/tag-missing.out"))"
 pass "make release-tag does not tag without SHELLSENTRY_RELEASE_TAG"
+
+if env -u SHELLSENTRY_RELEASE_TAG -u RELEASE_TAG make -s release-preflight >"$scratch/preflight-missing.out" 2>&1; then
+	fail "make release-preflight without SHELLSENTRY_RELEASE_TAG must be refused"
+fi
+grep -q 'SHELLSENTRY_RELEASE_TAG required' "$scratch/preflight-missing.out" ||
+	fail "release-preflight missing-tag refusal (log: $(cat "$scratch/preflight-missing.out"))"
+pass "make release-preflight requires SHELLSENTRY_RELEASE_TAG"
 
 echo "[ok] Makefile SHELLSENTRY_RELEASE_TAG-only"

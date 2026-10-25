@@ -20,9 +20,8 @@ version="$(tr -d ' \t\r\n' <VERSION)"
 [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
 	die 'VERSION must contain one stable semantic version'
 tag="v${version}"
-if [[ -n "${SHELLSENTRY_RELEASE_TAG:-}" && "$SHELLSENTRY_RELEASE_TAG" != "$tag" ]]; then
-	die "SHELLSENTRY_RELEASE_TAG must equal $tag"
-fi
+[[ -n "${SHELLSENTRY_RELEASE_TAG:-}" ]] || die 'SHELLSENTRY_RELEASE_TAG required'
+[[ "$SHELLSENTRY_RELEASE_TAG" == "$tag" ]] || die "SHELLSENTRY_RELEASE_TAG must equal $tag"
 
 [[ -z "$(git status --porcelain --untracked-files=all)" ]] || die 'working tree is not clean'
 ok 'working tree is clean'

@@ -88,7 +88,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
 .PHONY: test-version-ldflags test-release-preflight test-release-guard-tag-version
 .PHONY: test-release-tag-operator test-release-prepare-tag-message test-release-tag-controls
-.PHONY: test-release-verify-remote-tag
+.PHONY: test-release-verify-remote-tag test-release-push-tag
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
 .PHONY: dogfood assert-no-pipe-install-sfetch test-no-pipe-to-shell-docs check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-assert-tool-pins test-bootstrap-negative-controls
@@ -342,7 +342,7 @@ endef
 require-release-tag:
 	$(call require_shellsentry_release_tag)
 
-release-preflight: ## Verify clean-tree pre-tag requirements (does not tag)
+release-preflight: require-release-tag ## Verify clean-tree pre-tag requirements (does not tag)
 	@./scripts/release-preflight.sh
 
 release-guard-tag-version: require-release-tag ## Validate the canonical SHELLSENTRY_RELEASE_TAG
@@ -447,6 +447,9 @@ test-release-tag-controls: ## Regression: tag identity, message, and ruleset con
 test-release-verify-remote-tag: ## Regression: remote tag object and GitHub verification
 	@./scripts/release-verify-remote-tag.test.sh
 
+test-release-push-tag: ## Regression: refuse an existing remote tag; verify after push
+	@./scripts/release-push-tag.test.sh
+
 test-release-tag: ## Regression: signed tag stays local and refuses GitHub Actions
 	@./scripts/test-release-tag.sh
 
@@ -472,6 +475,7 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-release-prepare-tag-message
 	@$(MAKE) test-release-tag-controls
 	@$(MAKE) test-release-verify-remote-tag
+	@$(MAKE) test-release-push-tag
 	@$(MAKE) test-release-tag
 	@$(MAKE) test-release-tag-smartcard
 	@$(MAKE) test-release-publish

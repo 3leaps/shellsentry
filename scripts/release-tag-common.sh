@@ -17,6 +17,13 @@ tag_stat_mode() {
 	fi
 }
 
+# Physical directory path. cd -P / pwd -P (no GNU readlink -f; works on macOS).
+tag_phys_dir() {
+	local dir="${1:-}"
+	[[ -n "$dir" && -d "$dir" ]] || return 1
+	(CDPATH= cd -P -- "$dir" && pwd -P)
+}
+
 tag_identity() {
 	[[ "${SHELLSENTRY_TAGGER_NAME:-} <${SHELLSENTRY_TAGGER_EMAIL:-}>" == "$(cat "$tag_root/config/release/tagger-identity.txt")" ]] || {
 		tag_die 'infosec tagger identity required'
@@ -130,14 +137,19 @@ tag_key_selector() {
 		tag_die 'external GPG home required'
 		return 1
 	}
-	local home
-	home="$(cd "$SHELLSENTRY_GPG_HOMEDIR" && pwd -P)"
+	local home default_home
+	home="$(tag_phys_dir "$SHELLSENTRY_GPG_HOMEDIR")" || {
+		tag_die 'external GPG home required'
+		return 1
+	}
 	case "$home" in "$tag_root"/* | "$tag_root")
 		tag_die 'GPG home must be outside the repository'
 		return 1
 		;;
 	esac
-	[[ "$home" != "${HOME:-/}/.gnupg" ]] || {
+	# Compare physical paths. HOME may itself be a symlink (macOS /var, tests).
+	default_home="$(tag_phys_dir "${HOME:-}/.gnupg")" || default_home=""
+	[[ -z "$default_home" || "$home" != "$default_home" ]] || {
 		tag_die 'GPG home must not be the default homedir'
 		return 1
 	}

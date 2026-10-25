@@ -14,7 +14,17 @@ pass() { echo "PASS: $*"; }
 WF_DIR=".github/workflows"
 [[ -d "$WF_DIR" ]] || fail "workflows directory missing"
 
-if grep -nE 'make[[:space:]]+(release-tag|release-push-tag|release-publish|release-sign|release-upload)\b' "$WF_DIR"/*; then
+# Do not use \b after release-tag: it matches make release-tag-tests (the
+# hyphen is a word boundary). Require a non-name character or end of string.
+CEREMONY_MAKE='make[[:space:]]+(release-tag|release-push-tag|release-publish|release-sign|release-upload)([^[:alnum:]_-]|$)'
+
+printf 'make release-tag\n' | grep -Eq "$CEREMONY_MAKE" ||
+    fail "ceremony regex must match make release-tag"
+printf 'make release-tag-tests\n' | grep -Eq "$CEREMONY_MAKE" &&
+    fail "ceremony regex must not match make release-tag-tests"
+pass "ceremony regex allows make release-tag-tests and still matches make release-tag"
+
+if grep -nE "$CEREMONY_MAKE" "$WF_DIR"/*; then
     fail "workflows must not invoke maintainer signing or publish targets"
 fi
 if grep -nE 'scripts/(release-tag|release-push-tag|release-publish|sign-release-assets|upload-release-assets)\.sh' "$WF_DIR"/*; then
@@ -38,7 +48,7 @@ scratch="$(mktemp -d "${TMPDIR:-/tmp}/shs-ci-hygiene.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 cp "$WF_DIR/ci.yml" "$scratch/ci.yml"
 printf '\n      - run: make release-publish\n' >>"$scratch/ci.yml"
-if grep -nE 'make[[:space:]]+(release-tag|release-publish|release-sign|release-upload)\b' "$scratch/ci.yml" >/dev/null; then
+if grep -nE "$CEREMONY_MAKE" "$scratch/ci.yml" >/dev/null; then
     pass "hygiene grep catches make release-publish spliced into ci.yml"
 else
     fail "hygiene grep missed a spliced make release-publish"

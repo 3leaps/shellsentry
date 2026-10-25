@@ -14,7 +14,11 @@ fake_home="$scratch/home"
 mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"
 printf 'sentinel\n' >"$fake_home/.gnupg/sentinel"
-find "$fake_home/.gnupg" -mindepth 1 -printf '%P\n' | sort >"$scratch/gnupg-before"
+# Portable: BSD/macOS find has no -printf.
+list_gnupg_rel() {
+	(CDPATH= cd -- "$1" && find . -mindepth 1 | sed 's|^\./||' | sort)
+}
+list_gnupg_rel "$fake_home/.gnupg" >"$scratch/gnupg-before"
 export HOME="$fake_home"
 export GNUPGHOME="$scratch/gpg"
 mkdir -m 700 "$GNUPGHOME"
@@ -130,13 +134,15 @@ fi
 echo 'PASS: unsigned annotated tag is rejected'
 
 # Wrong pin: replace committed public key with a second throwaway key.
+# Unset GNUPGHOME so --homedir wins (macOS GnuPG otherwise uses the bound home).
 git -C "$fixture" tag -d v0.0.0 >/dev/null
 other="$scratch/other"
 mkdir -m 700 "$other"
-gpg --homedir "$other" --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
+other_gpg() { env -u GNUPGHOME gpg --homedir "$other" "$@"; }
+other_gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
 	'Other <other@example.invalid>' ed25519 cert 0 >/dev/null 2>&1
-other_primary="$(gpg --homedir "$other" --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-gpg --homedir "$other" --batch --armor --export "$other_primary" >"$fixture/docs/security/release-signing-keys.asc"
+other_primary="$(other_gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
+other_gpg --batch --armor --export "$other_primary" >"$fixture/docs/security/release-signing-keys.asc"
 printf 'gpg %s\nminisign %s\n' "$other_primary" "$(printf 'b%.0s' {1..64})" >"$fixture/keys/expected-fingerprints.txt"
 git -C "$fixture" add docs/security/release-signing-keys.asc keys/expected-fingerprints.txt
 git -C "$fixture" -c commit.gpgsign=false commit -qm 'wrong pin'
@@ -149,7 +155,7 @@ if (cd "$fixture" && ./scripts/verify-pinned-tag.sh) >/dev/null 2>&1; then
 fi
 echo 'PASS: pin mismatch is rejected'
 
-find "$fake_home/.gnupg" -mindepth 1 -printf '%P\n' | sort >"$scratch/gnupg-after"
+list_gnupg_rel "$fake_home/.gnupg" >"$scratch/gnupg-after"
 cmp -s "$scratch/gnupg-before" "$scratch/gnupg-after" || {
 	echo 'error: test touched $HOME/.gnupg' >&2
 	diff -u "$scratch/gnupg-before" "$scratch/gnupg-after" >&2 || true

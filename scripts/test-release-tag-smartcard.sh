@@ -33,6 +33,9 @@ pass "release-tag.sh does not export secrets or kill the operator home"
 
 # Mutant: restoring the export-into-temp path must be caught.
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/shs-tag-card.XXXXXX")"
+# Resolve /var -> /private/var on macOS so later physical-path compares match.
+# Do not weaken the GPG-home symlink refusal; only the scratch prefix is canonicalized.
+scratch="$(CDPATH= cd -P -- "$scratch" && pwd -P)"
 cleanup() {
     gpgconf --homedir "$scratch/op" --kill all >/dev/null 2>&1 || true
     rm -rf "$scratch"

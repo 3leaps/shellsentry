@@ -90,12 +90,12 @@ expect_fail env REMOTE_OBJECT="$(printf 'a%.0s' {1..40})" \
 cat >"$TAG_JSON" <<JSON
 {"tag":"v1.2.3","object":{"type":"commit","sha":"$commit"},"verification":{"verified":false,"reason":"valid"}}
 JSON
-expect_fail env -C "$scratch/tree" ./scripts/release-verify-remote-tag.sh
+expect_fail "$scratch/tree/scripts/release-verify-remote-tag.sh"
 
 # reason != valid
 cat >"$TAG_JSON" <<JSON
 {"tag":"v1.2.3","object":{"type":"commit","sha":"$commit"},"verification":{"verified":true,"reason":"unsigned"}}
 JSON
-expect_fail env -C "$scratch/tree" ./scripts/release-verify-remote-tag.sh
+expect_fail "$scratch/tree/scripts/release-verify-remote-tag.sh"
 
 echo '[ok] remote tag object and GitHub verification controls passed'
