@@ -193,6 +193,18 @@ jobs:
           export PATH="$PWD/bin:$PATH"
           make test-bootstrap-negative-controls
 
+      - name: Signed-tag tooling tests
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/bin:$PATH"
+          if ! command -v gpg >/dev/null 2>&1; then
+            brew install gnupg
+          fi
+          if ! command -v jq >/dev/null 2>&1; then
+            brew install jq
+          fi
+          GOTOOLCHAIN=go1.26.10 make release-tag-tests
+
   windows-dogfood-x64:
     name: Windows dogfood (x64)
     runs-on: windows-latest

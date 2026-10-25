@@ -26,6 +26,11 @@ if grep -nE -- '--export-secret-(keys|subkeys)' "$TAG_SH"; then
 fi
 grep -Fq 'export GNUPGHOME="$SHELLSENTRY_GPG_HOMEDIR"' "$TAG_SH" ||
     fail "release-tag.sh must bind GNUPGHOME to the operator home"
+grep -Fq 'GIT_COMMITTER_NAME="$SHELLSENTRY_TAGGER_NAME"' "$TAG_SH" ||
+    fail "release-tag.sh must tag as SHELLSENTRY_TAGGER_NAME, not the first GPG UID"
+if grep -nE 'uid="\$\(gpg' "$TAG_SH"; then
+    fail "release-tag.sh must not take the tagger from the first GPG UID"
+fi
 pass "release-tag is signed, local, and refuses CI"
 
 # Mutant: unsigned tag or a push must be caught.
@@ -81,6 +86,9 @@ unset GITHUB_ACTIONS || true
 file_version="$(tr -d ' \n' <VERSION)"
 export SHELLSENTRY_RELEASE_TAG="v${file_version}"
 export SHELLSENTRY_PGP_KEY_ID=0123456789ABCDEF0123456789ABCDEF01234567!
+export SHELLSENTRY_GPG_SIGNING_FINGERPRINT="$(awk '$1=="gpg" {print $2}' "$ROOT/keys/expected-fingerprints.txt")"
+export SHELLSENTRY_TAGGER_NAME='3 Leaps Infosec Team'
+export SHELLSENTRY_TAGGER_EMAIL='infosec@3leaps.net'
 fake_home="$scratch/home"
 mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"
@@ -92,6 +100,62 @@ echo "$out" | grep -q 'must not be the default homedir' || {
     fail "default homedir refusal (got the log above)"
 }
 pass "default GPG homedir is refused"
+
+# HOME itself is a symlink; GPG_HOMEDIR is the physical default keyring.
+# The refusal must resolve both sides (macOS /var, tests). Do not weaken ! -L.
+real_home="$scratch/real-home"
+mkdir -p "$real_home/.gnupg"
+chmod 700 "$real_home/.gnupg"
+ln -s "$real_home" "$scratch/home-link"
+export HOME="$scratch/home-link"
+phys_gnupg="$(CDPATH= cd -P -- "$real_home/.gnupg" && pwd -P)"
+export SHELLSENTRY_GPG_HOMEDIR="$phys_gnupg"
+[[ ! -L "$SHELLSENTRY_GPG_HOMEDIR" ]] || fail "fixture GPG home itself must not be a symlink"
+[[ "$SHELLSENTRY_GPG_HOMEDIR" != "${HOME}/.gnupg" ]] || fail "fixture must keep HOME unresolved so only phys-dir compare catches it"
+out="$("$TAG_SH" 2>&1)" && fail "release-tag.sh must refuse the default homedir when HOME is a symlink"
+echo "$out" | grep -q 'must not be the default homedir' || {
+	echo "$out" >&2
+	fail "HOME-symlink default homedir refusal (got the log above)"
+}
+pass "default GPG homedir is refused when HOME is a symlink"
+
+# Mutant: compare the physical GPG home to unresolved $HOME/.gnupg. That slips
+# through to key lookup instead of the default-homedir refusal.
+mkdir -p "$scratch/mut-home/scripts" "$scratch/mut-home/keys"
+python3 - "$ROOT/scripts/release-tag-common.sh" "$scratch/mut-home/scripts/release-tag-common.sh" <<'PY' || fail "unresolved-HOME mutant was not distinguished"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'default_home="$(tag_phys_dir "${HOME:-}/.gnupg")" || default_home=""'
+new = 'default_home="${HOME:-}/.gnupg"'
+if old not in text:
+    raise SystemExit('live default_home uses tag_phys_dir on HOME')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('mutant still resolves HOME')
+Path(sys.argv[2]).write_text(mut)
+PY
+printf 'gpg %s\n' "$SHELLSENTRY_GPG_SIGNING_FINGERPRINT" >"$scratch/mut-home/keys/expected-fingerprints.txt"
+set +e
+mut_out="$(
+	SHELLSENTRY_PGP_KEY_ID="$SHELLSENTRY_PGP_KEY_ID" \
+		SHELLSENTRY_GPG_SIGNING_FINGERPRINT="$SHELLSENTRY_GPG_SIGNING_FINGERPRINT" \
+		SHELLSENTRY_GPG_HOMEDIR="$phys_gnupg" \
+		HOME="$scratch/home-link" \
+		bash -c 'source "$1"; tag_key_selector' _ "$scratch/mut-home/scripts/release-tag-common.sh" 2>&1
+)"
+mut_rc=$?
+set -e
+[[ "$mut_rc" -ne 0 ]] || fail "unresolved-HOME mutant should still fail at key lookup"
+echo "$mut_out" | grep -q 'must not be the default homedir' && {
+	echo "$mut_out" >&2
+	fail "unresolved-HOME mutant still treated the physical GPG home as default"
+}
+echo "$mut_out" | grep -q 'signing subkey unavailable' || {
+	echo "$mut_out" >&2
+	fail "unresolved-HOME mutant should reach key lookup after skipping the default-homedir check"
+}
+pass "default-homedir compare resolves HOME; skipping that lets a symlink HOME slip through"
 
 in_repo="$ROOT/dist/.gpg-home-test"
 mkdir -p "$in_repo"
