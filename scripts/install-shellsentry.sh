@@ -49,10 +49,10 @@ SHELLSENTRY_REPO="3leaps/shellsentry"
 SHELLSENTRY_API="https://api.github.com/repos/${SHELLSENTRY_REPO}/releases"
 
 # Embedded trust anchor - minisign public key for verifying releases
-# Must match configs/keys/shellsentry-minisign.pub (embedded in the binary).
-SHELLSENTRY_MINISIGN_PUBKEY="${SHELLSENTRY_MINISIGN_PUBKEY:-RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1}"
+# Must match docs/security/shellsentry-minisign.pub (embedded in the binary).
+SHELLSENTRY_MINISIGN_PUBKEY="RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1"
 # Pinned PGP fingerprint (for optional fallback)
-SHELLSENTRY_PGP_FPR="${SHELLSENTRY_PGP_FPR:-0CACA49B3119B6BC12B2CA11B9B485F294B9FE07}"
+SHELLSENTRY_PGP_FPR="0CACA49B3119B6BC12B2CA11B9B485F294B9FE07"
 # Previous-key anchors, pin-scoped ONLY. SHELLSENTRY_PREVKEY_MAX is the last tag
 # signed with the previous org keys (historical fact, never advance it): tags at
 # or below it verify against the LEGACY anchors; tags above verify against the

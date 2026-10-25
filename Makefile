@@ -53,8 +53,7 @@ SFETCH_ENGINE_SHA256 := 9a074a15db18bca93601e23eca54d411ee72ce69413e802e083f535f
 SFETCH_ACTION_SHA := c44577261902c848119d3c89b0138becb613b158
 # Engine source repo (flag-owned; no ambient env seam).
 SFETCH_ENGINE_REPO := 3leaps/sfetch
-# Embedded consumer trust anchor (do not fetch sfetch-minisign.pub from releases).
-SFETCH_MINISIGN_PUBKEY := RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
+# Third-party sfetch pin is docs/security/sfetch-minisign.pub (no Makefile literal).
 GONEAT_VERSION ?= v0.6.6
 GOVULNCHECK_VERSION ?= v1.6.0
 STATICCHECK_VERSION ?= v0.6.1
@@ -89,6 +88,9 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: test-version-ldflags test-release-preflight test-release-guard-tag-version
 .PHONY: test-release-tag-operator test-release-prepare-tag-message test-release-tag-controls
 .PHONY: test-release-verify-remote-tag test-release-push-tag
+.PHONY: test-release-decernor test-release-stage-tagged-pubkeys
+.PHONY: test-ci-install-decernor test-release-verify-committed-anchors
+.PHONY: release-insert-anchors release-verify-committed-anchors
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
 .PHONY: dogfood assert-no-pipe-install-sfetch test-no-pipe-to-shell-docs check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-assert-tool-pins test-bootstrap-negative-controls
@@ -462,6 +464,24 @@ test-release-publish: ## Regression: publish promotes only a byte-verified draft
 test-verify-pinned-tag: ## Regression: signed tag verifies against the committed public pin
 	@./scripts/verify-pinned-tag.test.sh
 
+test-release-decernor: ## Regression: ceremony binds Decernor by SHELLSENTRY_DECERNOR_BIN only
+	@./scripts/release-decernor.test.sh
+
+test-release-stage-tagged-pubkeys: ## Regression: public keys stage from the tagged commit
+	@./scripts/release-stage-tagged-pubkeys.test.sh
+
+test-ci-install-decernor: ## Regression: CI Decernor install prints one stdout path (linux amd64)
+	@./scripts/ci-install-decernor.test.sh
+
+test-release-verify-committed-anchors: ## Regression: in-tree anchors mismatch fails (needs SHELLSENTRY_DECERNOR_BIN)
+	@./scripts/release-verify-committed-anchors.test.sh
+
+release-insert-anchors: ## Maintainer-only: derive public fingerprint anchors from committed exports
+	@./scripts/release-insert-anchors.sh
+
+release-verify-committed-anchors: ## Verify committed public exports against both fingerprint anchors
+	@./scripts/release-verify-committed-anchors.sh
+
 release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the default homedir)
 	@$(MAKE) test-workflow-action-pins
 	@$(MAKE) test-release-workflow-draft
@@ -480,6 +500,8 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-release-tag-smartcard
 	@$(MAKE) test-release-publish
 	@$(MAKE) test-verify-pinned-tag
+	@$(MAKE) test-release-decernor
+	@$(MAKE) test-release-stage-tagged-pubkeys
 	@echo "[ok] Release tag tooling tests passed"
 
 release-notes: require-release-tag ## Copy release notes into dist/release
@@ -495,27 +517,17 @@ release-notes: require-release-tag ## Copy release notes into dist/release
 release-sign: require-release-tag ## Sign checksum manifests
 	SHELLSENTRY_MINISIGN_KEY=$(SHELLSENTRY_MINISIGN_KEY) SHELLSENTRY_PGP_KEY_ID=$(SHELLSENTRY_PGP_KEY_ID) SHELLSENTRY_GPG_HOMEDIR=$(SHELLSENTRY_GPG_HOMEDIR) ./scripts/sign-release-assets.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
 
-release-export-key: ## Export PGP public key to dist/release
-	SHELLSENTRY_GPG_HOMEDIR=$(SHELLSENTRY_GPG_HOMEDIR) ./scripts/export-release-key.sh $(SHELLSENTRY_PGP_KEY_ID) $(DIST_RELEASE)
-
-release-export-minisign-key: ## Copy minisign public key to dist/release
-	@if [ -z "$(SHELLSENTRY_MINISIGN_KEY)" ] && [ -z "$(SHELLSENTRY_MINISIGN_PUB)" ]; then echo "SHELLSENTRY_MINISIGN_KEY or SHELLSENTRY_MINISIGN_PUB not set" >&2; exit 1; fi
+release-export-key: require-release-tag ## Stage PGP public key from the tagged commit
 	@mkdir -p $(DIST_RELEASE)
-	@# Use explicit pub path if set, otherwise derive from secret key path
-	@if [ -n "$(SHELLSENTRY_MINISIGN_PUB)" ]; then \
-		pubkey="$(SHELLSENTRY_MINISIGN_PUB)"; \
-	else \
-		pubkey="$$(echo "$(SHELLSENTRY_MINISIGN_KEY)" | sed 's/\\.key$$/.pub/')"; \
-	fi; \
-	if [ -f "$$pubkey" ]; then \
-		cp "$$pubkey" "$(DIST_RELEASE)/$(MINISIGN_PUB_NAME)"; \
-		echo "[ok] Copied minisign public key to $(DIST_RELEASE)/$(MINISIGN_PUB_NAME)"; \
-	else \
-		echo "error: public key $$pubkey not found" >&2; \
-		exit 1; \
-	fi
+	./scripts/release-stage-tagged-pubkeys.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
 
-release-export-keys: release-export-minisign-key release-export-key ## Export all public signing keys
+release-export-minisign-key: require-release-tag ## Stage minisign public key from the tagged commit
+	@mkdir -p $(DIST_RELEASE)
+	./scripts/release-stage-tagged-pubkeys.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
+
+release-export-keys: require-release-tag ## Stage public signing keys from the tagged commit
+	@mkdir -p $(DIST_RELEASE)
+	./scripts/release-stage-tagged-pubkeys.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
 
 verify-release-key: ## Verify PGP key is public-only
 	./scripts/verify-public-key.sh $(DIST_RELEASE)/$(PUBLIC_KEY_NAME)
@@ -544,7 +556,9 @@ release-verify-minisign-pubkey: build ## Verify minisign public key matches embe
 		exit 1; \
 	fi
 
-release-verify-keys: release-verify-key ## Verify all exported public keys
+release-verify-keys: ## Verify committed anchors, then exported public keys
+	@./scripts/release-verify-committed-anchors.sh
+	@$(MAKE) release-verify-key
 	@if [ -f "$(DIST_RELEASE)/$(MINISIGN_PUB_NAME)" ]; then \
 		$(MAKE) release-verify-minisign-pubkey FILE=$(DIST_RELEASE)/$(MINISIGN_PUB_NAME); \
 	else \

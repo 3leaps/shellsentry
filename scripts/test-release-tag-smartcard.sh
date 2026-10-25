@@ -158,11 +158,25 @@ mkdir -p "$fixture/docs/security" "$fixture/keys" "$fixture/scripts" "$fixture/c
 cp "$ROOT/scripts/release-tag.sh" "$ROOT/scripts/verify-pinned-tag.sh" \
 	"$ROOT/scripts/release-ci-refuse.sh" "$ROOT/scripts/release-tag-common.sh" \
 	"$ROOT/scripts/release-guard-tag-version.sh" "$ROOT/scripts/release-tag-body.sh" \
-	"$ROOT/scripts/release-prepare-tag-message.py" "$fixture/scripts/"
+	"$ROOT/scripts/release-prepare-tag-message.py" "$ROOT/scripts/release-decernor.sh" \
+	"$fixture/scripts/"
 chmod +x "$fixture/scripts/"*
 printf '3 Leaps Infosec Team <infosec@3leaps.net>\n' >"$fixture/config/release/tagger-identity.txt"
 gpg --homedir "$op" --batch --armor --export "$primary" >"$fixture/docs/security/release-signing-keys.asc"
+printf 'untrusted comment: fixture minisign\nRWTfixturekeyblobAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n' \
+	>"$fixture/docs/security/shellsentry-minisign.pub"
 printf 'gpg %s\nminisign %s\n' "$primary" "$(printf 'a%.0s' {1..64})" >"$fixture/keys/expected-fingerprints.txt"
+printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$fixture/keys/expected-fingerprints.ndjson"
+cat >"$scratch/decernor" <<'EOF'
+#!/usr/bin/env bash
+case "$1 ${2:-}" in
+  'version ') echo 'decernor 0.1.8' ;;
+  'version -e') printf 'Version:         0.1.8\nCommit:          testdata\nBuild Date:      testdata\nGo Version:      testdata\nGofulmen:        testdata\nCrucible:        testdata\n' ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$scratch/decernor"
+export SHELLSENTRY_DECERNOR_BIN="$scratch/decernor"
 echo '0.0.0' >"$fixture/VERSION"
 printf 'fixture\n' >"$fixture/file"
 git -C "$fixture" add VERSION file docs/security keys scripts config

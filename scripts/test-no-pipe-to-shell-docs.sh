@@ -204,8 +204,25 @@ if [ -n "$unchained_hits" ]; then
 fi
 pass "install blocks chain signature, checksum, and run"
 
-cmp -s docs/security/release-signing-keys.asc configs/keys/release-signing-keys.asc ||
-    fail "configs/keys/release-signing-keys.asc must match docs/security/release-signing-keys.asc"
-pass "configs/keys GPG pin matches docs/security"
+[[ ! -e configs/keys/release-signing-keys.asc ]] ||
+    fail "configs/keys/release-signing-keys.asc must not exist; SSOT is docs/security/release-signing-keys.asc"
+[[ ! -e configs/keys/shellsentry-minisign.pub ]] ||
+    fail "configs/keys/shellsentry-minisign.pub must not exist; embed docs/security/shellsentry-minisign.pub"
+pass "duplicate configs/keys pins are absent"
+grep -q 'gpg --import docs/security/release-signing-keys.asc' README.md ||
+    fail "README gpg import must use docs/security/release-signing-keys.asc"
+if grep -n 'gpg --import configs/keys/' README.md; then
+    fail "README must not import the GPG pin from configs/keys"
+fi
+pass "README gpg import uses docs/security"
+grep -q 'gpg --import docs/security/release-signing-keys.asc' docs/releases/v0.1.8.md ||
+    fail "v0.1.8 notes gpg import must use docs/security/release-signing-keys.asc"
+if grep -n 'gpg --import configs/keys/' docs/releases/v0.1.8.md; then
+    fail "v0.1.8 notes must not import the GPG pin from configs/keys"
+fi
+if grep -n 'gpg --import configs/keys/' RELEASE_NOTES.md; then
+    fail "RELEASE_NOTES.md must not import the GPG pin from configs/keys"
+fi
+pass "current release notes gpg import uses docs/security"
 
 echo "[ok] no pipe-to-shell install docs"

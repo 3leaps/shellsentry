@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -161,5 +162,18 @@ func TestMain_ExitCodes(t *testing.T) {
 				t.Errorf("output should contain %q, got: %s", tt.wantOutput, out)
 			}
 		})
+	}
+}
+
+func TestEmbeddedMinisignMatchesCommittedPin(t *testing.T) {
+	want, err := os.ReadFile("docs/security/shellsentry-minisign.pub")
+	if err != nil {
+		t.Fatalf("read docs/security/shellsentry-minisign.pub: %v", err)
+	}
+	if embeddedMinisignPubkey != string(want) {
+		t.Fatal("embedded minisign pin does not match docs/security/shellsentry-minisign.pub")
+	}
+	if _, err := os.Stat("configs/keys/shellsentry-minisign.pub"); !os.IsNotExist(err) {
+		t.Fatal("configs/keys/shellsentry-minisign.pub must not exist; embed docs/security/shellsentry-minisign.pub")
 	}
 }

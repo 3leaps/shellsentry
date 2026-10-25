@@ -31,17 +31,28 @@ committed() {
 }
 pin="$keyring/release-signing-keys.asc"
 anchors="$keyring/expected-fingerprints.txt"
+anchors_ndjson="$keyring/expected-fingerprints.ndjson"
+minisign_pin="$keyring/shellsentry-minisign.pub"
 identity="$keyring/tagger-identity.txt"
 committed docs/security/release-signing-keys.asc "$pin"
 committed keys/expected-fingerprints.txt "$anchors"
+committed keys/expected-fingerprints.ndjson "$anchors_ndjson"
+committed docs/security/shellsentry-minisign.pub "$minisign_pin"
 committed config/release/tagger-identity.txt "$identity"
+# PDR-0008: Decernor is the designated checker. Pins are the tagged blobs.
+# shellcheck source=scripts/release-decernor.sh
+source "$(dirname "$0")/release-decernor.sh"
+resolve_release_decernor || die 'trusted Decernor identity/version check failed'
+"$RELEASE_DECERNOR_BIN" fingerprint verify \
+	--anchors "$anchors" \
+	--anchors-ndjson "$anchors_ndjson" \
+	--gpg "$pin" --minisign "$minisign_pin" >/dev/null || die 'Decernor rejected committed pin and anchors'
+# The GPG primary comes from Decernor's anchor file, not a second fingerprint parse.
 primary="$(awk '$1=="gpg" {print $2}' "$anchors")"
 [[ "$primary" =~ ^[0-9A-F]{40}$ ]] || die 'primary anchor malformed'
 mkdir -m 700 "$keyring/home"
 GNUPGHOME="$keyring/home" gpg --batch --quiet --import "$pin" || die 'pin import failed'
 [[ "$(GNUPGHOME="$keyring/home" gpg --batch --with-colons --list-keys | awk -F: '$1=="pub" {count++} END {print count+0}')" == 1 ]] || die 'pin must hold exactly one primary key'
-pinned_primary="$(GNUPGHOME="$keyring/home" gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-[[ "$pinned_primary" == "$primary" ]] || die 'pin does not match primary anchor'
 expected_tagger="$(tr -d '\r' <"$identity")"
 expected_tagger="${expected_tagger%"${expected_tagger##*[![:space:]]}"}"
 [[ "$expected_tagger" == '3 Leaps Infosec Team <infosec@3leaps.net>' ]] || die 'committed tagger identity is not the infosec team'

@@ -96,6 +96,26 @@ jobs:
           export PATH="$PWD/bin:$PATH"
           [ "$(command -v gosec)" = "$PWD/bin/gosec" ]
 
+      - name: Install pinned Decernor
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/decernor-ci"
+          mkdir -p "$tool_dir"
+          SHELLSENTRY_DECERNOR_BIN="$(./scripts/ci-install-decernor.sh "$tool_dir")"
+          case "$SHELLSENTRY_DECERNOR_BIN" in
+            *$'\n'*) echo "error: Decernor install printed extra stdout" >&2; exit 1 ;;
+          esac
+          echo "SHELLSENTRY_DECERNOR_BIN=$SHELLSENTRY_DECERNOR_BIN" >>"$GITHUB_ENV"
+          echo "Installed Decernor at $SHELLSENTRY_DECERNOR_BIN"
+
+      - name: Verify committed public anchors
+        run: |
+          set -euo pipefail
+          test -x "${SHELLSENTRY_DECERNOR_BIN:?SHELLSENTRY_DECERNOR_BIN required}"
+          ./scripts/release-verify-committed-anchors.sh
+          ./scripts/ci-install-decernor.test.sh
+          ./scripts/release-verify-committed-anchors.test.sh
+
       - name: Quality
         run: |
           export PATH="$PWD/bin:$PATH"

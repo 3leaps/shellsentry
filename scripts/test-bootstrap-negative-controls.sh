@@ -21,9 +21,12 @@ get_make_var() {
 PIN_VERSION="$(get_make_var SFETCH_VERSION)"
 PIN_ENGINE_SHA="$(get_make_var SFETCH_ENGINE_SHA)"
 PIN_ENGINE_SUM="$(get_make_var SFETCH_ENGINE_SHA256)"
-PIN_ANCHOR="$(get_make_var SFETCH_MINISIGN_PUBKEY)"
-[ -n "$PIN_VERSION" ] && [ -n "$PIN_ENGINE_SHA" ] && [ -n "$PIN_ENGINE_SUM" ] && [ -n "$PIN_ANCHOR" ] ||
+PIN_ANCHOR="$(awk 'NR==2 {print; exit}' docs/security/sfetch-minisign.pub | tr -d '\r')"
+[ -n "$PIN_VERSION" ] && [ -n "$PIN_ENGINE_SHA" ] && [ -n "$PIN_ENGINE_SUM" ] ||
     fail "missing Makefile sfetch pins"
+[[ -s docs/security/sfetch-minisign.pub && ! -L docs/security/sfetch-minisign.pub ]] ||
+    fail "docs/security/sfetch-minisign.pub missing"
+[[ "$PIN_ANCHOR" == RW* ]] || fail "docs/security/sfetch-minisign.pub is missing the RW public line"
 
 # --- Wrong engine digest fails before execution ---
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/shs-neg.XXXXXX")"
