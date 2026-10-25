@@ -31,10 +31,22 @@ committed() {
 }
 pin="$keyring/release-signing-keys.asc"
 anchors="$keyring/expected-fingerprints.txt"
+anchors_ndjson="$keyring/expected-fingerprints.ndjson"
+minisign_pin="$keyring/shellsentry-minisign.pub"
 identity="$keyring/tagger-identity.txt"
 committed docs/security/release-signing-keys.asc "$pin"
 committed keys/expected-fingerprints.txt "$anchors"
+committed keys/expected-fingerprints.ndjson "$anchors_ndjson"
+committed docs/security/shellsentry-minisign.pub "$minisign_pin"
 committed config/release/tagger-identity.txt "$identity"
+# PDR-0008: Decernor is the designated checker. Pins are the tagged blobs.
+# shellcheck source=scripts/release-decernor.sh
+source "$(dirname "$0")/release-decernor.sh"
+resolve_release_decernor || die 'trusted Decernor identity/version check failed'
+"$RELEASE_DECERNOR_BIN" fingerprint verify \
+	--anchors "$anchors" \
+	--anchors-ndjson "$anchors_ndjson" \
+	--gpg "$pin" --minisign "$minisign_pin" >/dev/null || die 'Decernor rejected committed pin and anchors'
 primary="$(awk '$1=="gpg" {print $2}' "$anchors")"
 [[ "$primary" =~ ^[0-9A-F]{40}$ ]] || die 'primary anchor malformed'
 mkdir -m 700 "$keyring/home"

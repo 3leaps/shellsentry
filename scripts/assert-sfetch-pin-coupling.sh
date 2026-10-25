@@ -90,8 +90,12 @@ if [ "$WANT_SHA" != "$WANT_ENG_SHA" ]; then
     exit 1
 fi
 
-if ! grep -qE '^SFETCH_MINISIGN_PUBKEY[[:space:]]*:?=' Makefile; then
-    echo "error: SFETCH_MINISIGN_PUBKEY missing from Makefile (reviewable anchor pin)" >&2
+if grep -qE '^SFETCH_MINISIGN_PUBKEY[[:space:]]*:?=' Makefile; then
+    echo "error: SFETCH_MINISIGN_PUBKEY Makefile literal is not the pin; use docs/security/sfetch-minisign.pub" >&2
+    exit 1
+fi
+if [ ! -s docs/security/sfetch-minisign.pub ] || [ -L docs/security/sfetch-minisign.pub ]; then
+    echo "error: docs/security/sfetch-minisign.pub missing or not a regular file" >&2
     exit 1
 fi
 

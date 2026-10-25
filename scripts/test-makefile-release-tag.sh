@@ -56,7 +56,8 @@ pass "stale prefixed alias and git describe fallback are distinguished"
 
 for target in release-preflight release-guard-tag-version release-prepare-tag-message release-tag \
 	release-push-tag release-verify-tag release-verify-remote-tag \
-	release-publish release-download release-notes release-sign release-upload; do
+	release-publish release-download release-notes release-sign release-upload \
+	release-export-key release-export-minisign-key release-export-keys; do
 	grep -E "^${target}: require-release-tag" Makefile >/dev/null ||
 		fail "$target must depend on require-release-tag first"
 done
@@ -68,7 +69,40 @@ grep -E '^release-verify-tag: require-release-tag' -A2 Makefile | grep -q 'verif
 	fail "release-verify-tag must invoke scripts/verify-pinned-tag.sh"
 grep -E '^release-verify-remote-tag: require-release-tag' -A2 Makefile | grep -q 'release-verify-remote-tag.sh' ||
 	fail "release-verify-remote-tag must invoke scripts/release-verify-remote-tag.sh"
+for target in release-export-key release-export-minisign-key release-export-keys; do
+	grep -E "^${target}: require-release-tag" -A3 Makefile | grep -q 'release-stage-tagged-pubkeys.sh' ||
+		fail "$target must stage public keys from the tagged commit"
+done
+if grep -E '^release-export-(key|minisign-key|keys):' -A6 Makefile | grep -q 'export-release-key.sh'; then
+	fail "release-export-* must not export from the operator keyring"
+fi
 pass "ceremony targets depend on require-release-tag"
+
+python3 - "$ROOT/Makefile" "$scratch/Makefile.export-mut" <<'PY' || fail "working-tree export mutant was not distinguished"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+live = "release-stage-tagged-pubkeys.sh"
+old = "export-release-key.sh"
+if live not in text:
+    raise SystemExit("live Makefile does not stage tagged public keys")
+export_block = text.split("release-export-key:", 1)[1].split("verify-release-key:", 1)[0]
+if old in export_block:
+    raise SystemExit("live release-export-* still calls export-release-key.sh")
+mut = text.replace(
+    "./scripts/release-stage-tagged-pubkeys.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)",
+    "./scripts/export-release-key.sh $(SHELLSENTRY_PGP_KEY_ID) $(DIST_RELEASE)",
+    1,
+)
+if old not in mut.split("release-export-key:", 1)[1].split("verify-release-key:", 1)[0]:
+    raise SystemExit("mutant did not restore operator-keyring export")
+Path(sys.argv[2]).write_text(mut)
+PY
+if grep -E '^release-export-(key|minisign-key|keys):' -A6 "$scratch/Makefile.export-mut" | grep -q 'export-release-key.sh'; then
+	pass "grep catches release-export-key restored to operator-keyring export"
+else
+	fail "export-key mutant was not distinguished"
+fi
 
 # Mutant: dropping the tag guard from release-tag must fail this check.
 python3 - "$ROOT/Makefile" <<'PY' || fail "require-release-tag mutant was not distinguished"
@@ -149,5 +183,23 @@ fi
 grep -q 'SHELLSENTRY_RELEASE_TAG required' "$scratch/preflight-missing.out" ||
 	fail "release-preflight missing-tag refusal (log: $(cat "$scratch/preflight-missing.out"))"
 pass "make release-preflight requires SHELLSENTRY_RELEASE_TAG"
+
+python3 - "$ROOT/Makefile" <<'PY' || fail "release-tag-tests must stay macOS-safe (no linux_amd64 Decernor download)"
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[1]).read_text()
+m = re.search(r'(?ms)^release-tag-tests:.*?^\S', text)
+if not m:
+    raise SystemExit('release-tag-tests target missing')
+body = m.group(0)
+if 'test-release-decernor' not in body or 'test-release-stage-tagged-pubkeys' not in body:
+    raise SystemExit('release-tag-tests must run ceremony binding and tagged-blob staging tests')
+if 'ci-install-decernor' in body or 'test-release-verify-committed-anchors' in body:
+    raise SystemExit('release-tag-tests must not download linux_amd64 Decernor')
+mut = body.replace('test-release-decernor', 'test-ci-install-decernor', 1)
+if 'ci-install-decernor' not in mut:
+    raise SystemExit('linux_amd64 download mutant was not distinguished')
+PY
+pass "release-tag-tests is macOS-safe and still covers ceremony binding"
 
 echo "[ok] Makefile SHELLSENTRY_RELEASE_TAG-only"

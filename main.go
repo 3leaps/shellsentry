@@ -22,9 +22,9 @@ var (
 	gitCommit = "unknown"
 )
 
-// Embedded trust anchor (minisign public key)
+// Canonical minisign trust anchor: docs/security/shellsentry-minisign.pub
 //
-//go:embed configs/keys/shellsentry-minisign.pub
+//go:embed docs/security/shellsentry-minisign.pub
 var embeddedMinisignPubkey string
 
 func main() {

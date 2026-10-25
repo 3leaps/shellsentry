@@ -60,3 +60,94 @@ if grep -nE 'scripts/(release-tag|release-publish|sign-release-assets|upload-rel
 else
     fail "hygiene grep missed a spliced release-tag.sh"
 fi
+
+# Job bodies from ci.yml (2-space job keys under jobs:).
+parse_jobs() {
+    python3 - "$1" <<'PY'
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+m = re.search(r"(?m)^jobs:\n", text)
+if not m:
+    raise SystemExit("ci.yml has no jobs:")
+parts = re.split(r"(?m)^  ([A-Za-z0-9_-]+):\n", text[m.end():])
+jobs = {}
+it = iter(parts[1:])
+for name in it:
+    jobs[name] = next(it)
+need = ("test", "macos-bootstrap-smoke")
+missing = [n for n in need if n not in jobs]
+if missing:
+    raise SystemExit("missing jobs: " + ",".join(missing))
+macos = jobs["macos-bootstrap-smoke"]
+linux = jobs["test"]
+if "make release-tag-tests" not in macos:
+    raise SystemExit("macos-bootstrap-smoke must run make release-tag-tests")
+if "ci-install-decernor.sh" in macos:
+    raise SystemExit("macos-bootstrap-smoke must not install linux_amd64 Decernor")
+install = linux.find("ci-install-decernor.sh")
+verify = linux.find("release-verify-committed-anchors.sh")
+if install < 0 or verify < 0:
+    raise SystemExit("linux amd64 must install Decernor and verify committed anchors")
+if install > verify:
+    raise SystemExit("linux amd64 must install Decernor before verifying anchors")
+print("ok")
+PY
+}
+
+parse_jobs "$WF_DIR/ci.yml" >/dev/null || fail "ci.yml identity/anchor CI wiring is missing"
+pass "macos runs make release-tag-tests; linux amd64 installs Decernor then verifies anchors"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-macos-tag-tests.yml" <<'PY' || fail "macos release-tag-tests mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+mut = text.replace("GOTOOLCHAIN=go1.26.10 make release-tag-tests", "GOTOOLCHAIN=go1.26.10 make test")
+if "make release-tag-tests" in mut:
+    raise SystemExit("mutant still has make release-tag-tests")
+dest.write_text(mut)
+PY
+if parse_jobs "$scratch/ci-no-macos-tag-tests.yml" >/dev/null 2>"$scratch/macos-mut.err"; then
+    fail "hygiene accepted ci.yml after removing macos make release-tag-tests"
+fi
+grep -q 'make release-tag-tests' "$scratch/macos-mut.err" ||
+    fail "macos mutant refusal (log: $(cat "$scratch/macos-mut.err"))"
+pass "removing macos make release-tag-tests fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-verify.yml" <<'PY' || fail "anchor-verify mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+mut = text.replace("./scripts/release-verify-committed-anchors.sh", "./scripts/release-preflight.sh")
+if "release-verify-committed-anchors.sh" in mut:
+    raise SystemExit("mutant still verifies committed anchors")
+dest.write_text(mut)
+PY
+if parse_jobs "$scratch/ci-no-verify.yml" >/dev/null 2>"$scratch/verify-mut.err"; then
+    fail "hygiene accepted ci.yml after removing committed-anchor verification"
+fi
+grep -q 'verify committed anchors' "$scratch/verify-mut.err" ||
+    fail "anchor-verify mutant refusal (log: $(cat "$scratch/verify-mut.err"))"
+pass "removing linux amd64 committed-anchor verification fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-swap-order.yml" <<'PY' || fail "install-before-verify mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+# Swap the two unique script names so verify appears first.
+a, b = "ci-install-decernor.sh", "release-verify-committed-anchors.sh"
+if text.find(a) < 0 or text.find(b) < 0 or text.find(a) > text.find(b):
+    raise SystemExit("live ci.yml is not install-then-verify")
+mut = text.replace(a, "DECERNOR_INSTALL_PLACEHOLDER").replace(b, a).replace("DECERNOR_INSTALL_PLACEHOLDER", b)
+if mut.find(a) < mut.find(b):
+    raise SystemExit("mutant did not reverse install/verify order")
+dest.write_text(mut)
+PY
+if parse_jobs "$scratch/ci-swap-order.yml" >/dev/null 2>"$scratch/order-mut.err"; then
+    fail "hygiene accepted ci.yml after swapping Decernor install and verify"
+fi
+grep -q 'before verifying anchors' "$scratch/order-mut.err" ||
+    fail "install-order mutant refusal (log: $(cat "$scratch/order-mut.err"))"
+pass "linux amd64 Decernor install must precede committed-anchor verification"

@@ -25,6 +25,7 @@ export SHELLSENTRY_TAGGER_EMAIL='infosec@3leaps.net'
 export SHELLSENTRY_GPG_SIGNING_FINGERPRINT=<40-hex-primary>
 export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
 export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; not ~/.gnupg; mode 0700
+export SHELLSENTRY_DECERNOR_BIN=/absolute/path/to/decernor     # regular executable; no symlink; no PATH fallback
 ```
 
 The tagger string must equal `config/release/tagger-identity.txt`
@@ -40,6 +41,7 @@ Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
 - [ ] Create `docs/releases/vX.Y.Z.md`
 - [ ] Commit: `git add -A && git commit -m "release: prepare vX.Y.Z"`
 - [ ] Push `main`
+- [ ] Confirm committed anchors: `make release-verify-committed-anchors`
 - [ ] Run the pre-tag gate: `make release-preflight`
 - [ ] Prepare the public tag message (creates `$SHELLSENTRY_TAG_MESSAGE_DIR/message.txt` if missing; does not overwrite): `make release-prepare-tag-message`
 - [ ] Create the signed annotated tag locally (does not push): `make release-tag`
@@ -47,8 +49,9 @@ Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
   Tag signing uses `SHELLSENTRY_GPG_HOMEDIR` and its existing agent/smartcard
   setup directly; it does not export secret keys. The primary secret key may
   remain offline. Public verification uses only the committed pin in a
-  temporary keyring (`docs/security/release-signing-keys.asc` and
-  `keys/expected-fingerprints.txt`), separate from the operator home.
+  temporary keyring (`docs/security/release-signing-keys.asc`,
+  `docs/security/shellsentry-minisign.pub`, and
+  `keys/expected-fingerprints.{txt,ndjson}`), separate from the operator home.
   Re-check with `make release-verify-tag`.
 
 - [ ] Push only the tag and confirm it is unchanged: `make release-push-tag`
@@ -183,10 +186,12 @@ Check current version anytime with `make version-check`.
 
 If rotating signing keys, also update:
 
-- [ ] `docs/security/release-signing-keys.asc` and `configs/keys/release-signing-keys.asc` - committed GPG public pin
-- [ ] `docs/security/shellsentry-minisign.pub` and `configs/keys/shellsentry-minisign.pub`
-- [ ] `keys/expected-fingerprints.txt` - GPG primary fingerprint and minisign key SHA-256
-- [ ] `scripts/install-shellsentry.sh` - embedded `SHELLSENTRY_MINISIGN_PUBKEY` and `SHELLSENTRY_PGP_FPR`
+- [ ] `docs/security/release-signing-keys.asc` - committed GPG public pin
+- [ ] `docs/security/shellsentry-minisign.pub` - committed minisign pin (also `go:embed`)
+- [ ] `docs/security/sfetch-minisign.pub` - third-party sfetch pin
+- [ ] `keys/expected-fingerprints.txt` and `keys/expected-fingerprints.ndjson` - derived by Decernor, never typed
+- [ ] `config/release/decernor-ci-sha256.txt` - digest of the Decernor archive CI downloads
+- [ ] `scripts/install-shellsentry.sh` - embedded `SHELLSENTRY_MINISIGN_PUBKEY` and `SHELLSENTRY_PGP_FPR` (equality-tested against the committed files)
 - [ ] `README.md` - verification snippet public key
 - [ ] Any external documentation referencing shellsentry signing keys
 

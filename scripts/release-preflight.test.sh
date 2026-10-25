@@ -26,8 +26,15 @@ git -C "$fixture" config user.email fixture@example.invalid
 printf '0.1.8\n' >"$fixture/VERSION"
 printf '3 Leaps Infosec Team <infosec@3leaps.net>\n' >"$fixture/config/release/tagger-identity.txt"
 printf 'pgp\n' >"$fixture/docs/security/release-signing-keys.asc"
+printf 'untrusted comment: fixture\nRWTfixture\n' >"$fixture/docs/security/shellsentry-minisign.pub"
+printf 'untrusted comment: sfetch fixture\nRWTsfetch\n' >"$fixture/docs/security/sfetch-minisign.pub"
+printf 'verifier README\n' >"$fixture/docs/security/README.md"
 printf 'gpg %s\nminisign %s\n' "$(printf 'A%.0s' {1..40})" "$(printf 'b%.0s' {1..64})" \
 	>"$fixture/keys/expected-fingerprints.txt"
+printf '{"schema_version":"v0"}\n' >"$fixture/keys/expected-fingerprints.ndjson"
+mkdir -p "$fixture/config/release"
+printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef  decernor_0.1.8_linux_amd64.tar.gz\n' \
+	>"$fixture/config/release/decernor-ci-sha256.txt"
 printf '## [0.1.8] - 2026-10-25\n\nnotes\n' >"$fixture/CHANGELOG.md"
 printf '## v0.1.8\n\nnotes\n' >"$fixture/RELEASE_NOTES.md"
 printf 'cut notes\n' >"$fixture/docs/releases/v0.1.8.md"

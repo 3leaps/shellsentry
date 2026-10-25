@@ -34,8 +34,18 @@ ok 'tagger identity is present'
 
 [[ -s "$root/docs/security/release-signing-keys.asc" && ! -L "$root/docs/security/release-signing-keys.asc" ]] ||
 	die 'docs/security/release-signing-keys.asc is missing'
+[[ -s "$root/docs/security/shellsentry-minisign.pub" && ! -L "$root/docs/security/shellsentry-minisign.pub" ]] ||
+	die 'docs/security/shellsentry-minisign.pub is missing'
+[[ -s "$root/docs/security/sfetch-minisign.pub" && ! -L "$root/docs/security/sfetch-minisign.pub" ]] ||
+	die 'docs/security/sfetch-minisign.pub is missing'
+[[ -s "$root/docs/security/README.md" && ! -L "$root/docs/security/README.md" ]] ||
+	die 'docs/security/README.md is missing'
 [[ -s "$root/keys/expected-fingerprints.txt" && ! -L "$root/keys/expected-fingerprints.txt" ]] ||
 	die 'keys/expected-fingerprints.txt is missing'
+[[ -s "$root/keys/expected-fingerprints.ndjson" && ! -L "$root/keys/expected-fingerprints.ndjson" ]] ||
+	die 'keys/expected-fingerprints.ndjson is missing'
+[[ -s "$root/config/release/decernor-ci-sha256.txt" && ! -L "$root/config/release/decernor-ci-sha256.txt" ]] ||
+	die 'config/release/decernor-ci-sha256.txt is missing'
 ok 'committed public pin and anchors are present'
 
 grep -Eq "^## \\[${version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md ||

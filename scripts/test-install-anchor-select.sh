@@ -14,7 +14,7 @@ fail() {
 pass() { echo "PASS: $*"; }
 
 INSTALLER="${ROOT}/scripts/install-shellsentry.sh"
-ANCHOR="${ROOT}/configs/keys/shellsentry-minisign.pub"
+ANCHOR="${ROOT}/docs/security/shellsentry-minisign.pub"
 
 [ -f "$INSTALLER" ] || fail "installer missing"
 [ -f "$ANCHOR" ] || fail "embedded anchor missing"
