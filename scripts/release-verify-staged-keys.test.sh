@@ -10,11 +10,14 @@ mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"
 printf 'sentinel\n' >"$fake_home/.gnupg/sentinel"
 export HOME="$fake_home"
+unset GPG_AGENT_INFO || true
 export GNUPGHOME="$scratch/gpg"
 mkdir -m 700 "$GNUPGHOME"
+printf 'allow-loopback-pinentry\ndisable-scdaemon\n' >"$GNUPGHOME/gpg-agent.conf"
+printf 'pinentry-mode loopback\n' >"$GNUPGHOME/gpg.conf"
 cleanup() {
-	gpgconf --homedir "$GNUPGHOME" --kill all >/dev/null 2>&1 || true
-	gpgconf --homedir "$scratch/other-gpg" --kill all >/dev/null 2>&1 || true
+	env -u GNUPGHOME gpgconf --homedir "$GNUPGHOME" --kill all >/dev/null 2>&1 || true
+	env -u GNUPGHOME gpgconf --homedir "$scratch/other-gpg" --kill all >/dev/null 2>&1 || true
 	rm -rf "$scratch"
 }
 trap cleanup EXIT
@@ -111,10 +114,13 @@ fi
 pass 'committed staged keys verify; Decernor saw the staged paths'
 
 # Unrelated throwaway PGP key with a signing subkey, plus the committed minisign pin.
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
-	'Synthetic unrelated <unrelated@example.invalid>' ed25519 cert 0 >/dev/null 2>&1
+gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
+	'Synthetic unrelated <unrelated@example.invalid>' ed25519 cert 0 \
+	|| fail 'gpg generate-key failed'
 unrelated_primary="$(gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$unrelated_primary" ed25519 sign 1d >/dev/null 2>&1
+gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
+	"$unrelated_primary" ed25519 sign 0 \
+	|| fail 'gpg add signing subkey failed'
 unrelated_dir="$scratch/unrelated-gpg"
 stage_ok "$unrelated_dir"
 gpg --batch --armor --export "$unrelated_primary" >"$unrelated_dir/shellsentry-release-signing-key.asc"

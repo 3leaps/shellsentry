@@ -10,11 +10,14 @@ mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"
 printf 'sentinel\n' >"$fake_home/.gnupg/sentinel"
 export HOME="$fake_home"
+unset GPG_AGENT_INFO || true
 export GNUPGHOME="$scratch/gpg"
 mkdir -m 700 "$GNUPGHOME"
+printf 'allow-loopback-pinentry\ndisable-scdaemon\n' >"$GNUPGHOME/gpg-agent.conf"
+printf 'pinentry-mode loopback\n' >"$GNUPGHOME/gpg.conf"
 cleanup() {
-	gpgconf --homedir "$GNUPGHOME" --kill all >/dev/null 2>&1 || true
-	gpgconf --homedir "$scratch/other-gpg" --kill all >/dev/null 2>&1 || true
+	env -u GNUPGHOME gpgconf --homedir "$GNUPGHOME" --kill all >/dev/null 2>&1 || true
+	env -u GNUPGHOME gpgconf --homedir "$scratch/other-gpg" --kill all >/dev/null 2>&1 || true
 	rm -rf "$scratch"
 }
 trap cleanup EXIT
@@ -63,21 +66,30 @@ then
 	fail 'test must bind GNUPGHOME before its first gpg call'
 fi
 
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
-	'Synthetic signing <signing@example.invalid>' ed25519 cert 0 >/dev/null 2>&1
+gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
+	'Synthetic signing <signing@example.invalid>' ed25519 cert 0 \
+	|| fail 'gpg generate-key failed'
 primary="$(gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-gpg --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$primary" ed25519 sign 1d >/dev/null 2>&1
+gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
+	"$primary" ed25519 sign 0 \
+	|| fail 'gpg add signing subkey failed'
 subkey="$(gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
 [[ "$primary" =~ ^[0-9A-F]{40}$ && "$subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'fixture signing key missing'
 
 mkdir -m 700 "$scratch/other-gpg"
+printf 'allow-loopback-pinentry\ndisable-scdaemon\n' >"$scratch/other-gpg/gpg-agent.conf"
+printf 'pinentry-mode loopback\n' >"$scratch/other-gpg/gpg.conf"
 # Unset GNUPGHOME so --homedir wins (macOS GnuPG otherwise uses the bound home).
 other_gpg() { env -u GNUPGHOME gpg --homedir "$scratch/other-gpg" "$@"; }
-other_gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
-	'Synthetic other <other@example.invalid>' ed25519 cert 0 >/dev/null 2>&1
+other_gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-generate-key \
+	'Synthetic other <other@example.invalid>' ed25519 cert 0 \
+	|| fail 'other gpg generate-key failed'
 other_primary="$(other_gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-other_gpg --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$other_primary" ed25519 sign 1d >/dev/null 2>&1
+other_gpg --batch --yes --no-tty --pinentry-mode loopback --passphrase '' --quick-add-key \
+	"$other_primary" ed25519 sign 0 \
+	|| fail 'other gpg add signing subkey failed'
 other_subkey="$(other_gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
+[[ "$other_primary" =~ ^[0-9A-F]{40}$ && "$other_subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'other fixture signing key missing'
 other_gpg --batch --armor --export "$other_primary" >"$scratch/other.asc"
 
 minisign -G -W -p "$scratch/good.pub" -s "$scratch/good.key" >/dev/null 2>&1 || fail 'minisign keygen failed'
