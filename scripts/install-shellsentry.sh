@@ -32,7 +32,8 @@
 #   1. Download SHA256SUMS and SHA256SUMS.minisig from the same release
 #   2. minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
 #      (tags <= v0.1.6 verify under the previous key: RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC)
-#   3. grep install-shellsentry.sh SHA256SUMS | sha256sum -c
+#   3. grep install-shellsentry.sh SHA256SUMS | sha256sum -c -
+#      (macOS without GNU sha256sum: shasum -a 256 -c)
 #
 # Repository: https://github.com/3leaps/shellsentry
 # Trust anchor: RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1

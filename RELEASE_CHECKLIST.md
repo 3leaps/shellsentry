@@ -178,7 +178,7 @@ Check current version anytime with `make version-check`.
 
 If rotating signing keys, also update:
 
-- [ ] `docs/security/release-signing-keys.asc` - committed GPG public pin
+- [ ] `docs/security/release-signing-keys.asc` and `configs/keys/release-signing-keys.asc` - committed GPG public pin
 - [ ] `docs/security/shellsentry-minisign.pub` and `configs/keys/shellsentry-minisign.pub`
 - [ ] `keys/expected-fingerprints.txt` - GPG primary fingerprint and minisign key SHA-256
 - [ ] `scripts/install-shellsentry.sh` - embedded `SHELLSENTRY_MINISIGN_PUBKEY` and `SHELLSENTRY_PGP_FPR`

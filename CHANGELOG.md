@@ -35,8 +35,10 @@ Semantic Versioning.
   an explicit `--homedir`.
 - **Install docs do not pipe curl to a shell.** Upgrade and install examples
   download the installer, verify `SHA256SUMS` plus minisign or PGP, optionally
-  run shellsentry on it, then execute. `scripts/test-no-pipe-to-shell-docs.sh`
-  fails if a `curl ... | bash` install recipe is restored.
+  run shellsentry on it, then execute. Checksums use `sha256sum -c -` or
+  `shasum -a 256 -c`, and `set -e` stops the run if a check fails.
+  `scripts/test-no-pipe-to-shell-docs.sh` fails if a `curl ... | bash` recipe,
+  a bare `sha256sum -c`, or an unchained installer run is restored.
 
 ### Added
 
