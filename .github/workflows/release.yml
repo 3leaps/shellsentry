@@ -1,4 +1,7 @@
 ---
+# Tag workflow is defined by the tagged commit: read-only, artifacts only.
+# It never creates a GitHub Release and never signs. A green run is a
+# consistency signal, not release authorization.
 name: Release
 
 'on':
@@ -6,15 +9,67 @@ name: Release
     tags:
       - "v*"
 
+defaults:
+  run:
+    shell: bash
+
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   NAME: shellsentry
 
 jobs:
+  verify-anchors:
+    name: Verify committed anchors
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Validate VERSION matches tag
+        run: |
+          set -euo pipefail
+          FILE_VERSION=$(cat VERSION)
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          echo "VERSION file: $FILE_VERSION"
+          echo "Git tag: $TAG_VERSION"
+          if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: Install pinned Decernor
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/decernor-ci"
+          mkdir -p "$tool_dir"
+          SHELLSENTRY_DECERNOR_BIN="$(./scripts/ci-install-decernor.sh "$tool_dir")"
+          case "$SHELLSENTRY_DECERNOR_BIN" in
+            *$'\n'*) echo "error: Decernor install printed extra stdout" >&2; exit 1 ;;
+          esac
+          echo "SHELLSENTRY_DECERNOR_BIN=$SHELLSENTRY_DECERNOR_BIN" >>"$GITHUB_ENV"
+          echo "Installed Decernor at $SHELLSENTRY_DECERNOR_BIN"
+
+      - name: Verify committed public anchors
+        run: |
+          set -euo pipefail
+          test -x "${SHELLSENTRY_DECERNOR_BIN:?SHELLSENTRY_DECERNOR_BIN required}"
+          ./scripts/release-verify-committed-anchors.sh
+
   build:
-    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify-anchors
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
@@ -33,16 +88,18 @@ jobs:
             goarch: arm64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+        with:
+          persist-credentials: false
 
       - name: Validate VERSION matches tag
         run: |
+          set -euo pipefail
           FILE_VERSION=$(cat VERSION)
           TAG_VERSION=${GITHUB_REF_NAME#v}
           echo "VERSION file: $FILE_VERSION"
           echo "Git tag: $TAG_VERSION"
           if [ "$FILE_VERSION" != "$TAG_VERSION" ]; then
-            MSG="VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"
-            echo "::error::$MSG"
+            echo "::error::VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"
             exit 1
           fi
 
@@ -61,8 +118,8 @@ jobs:
             exit 1
           fi
 
-      - name: Install release dependencies
-        run: sudo apt-get update && sudo apt-get install -y zip gnupg
+      - name: Install package dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip
 
       - name: Build
         run: make build
@@ -72,7 +129,6 @@ jobs:
           CGO_ENABLED: 0
 
       - name: Package artifact
-        shell: bash
         run: |
           set -euo pipefail
           ASSET="shellsentry_${{ matrix.goos }}_${{ matrix.goarch }}"
@@ -96,35 +152,3 @@ jobs:
           path: ${{ env.ASSET_FILE }}
           if-no-files-found: error
           retention-days: 30
-
-  upload:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-
-      - name: Download packed archives
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
-        with:
-          path: dist/release
-          merge-multiple: true
-
-      - name: Copy install script
-        run: |
-          mkdir -p dist/release
-          cp scripts/install-shellsentry.sh dist/release/install-shellsentry.sh
-
-      # Every release-writing action must set draft: true so CI cannot publish.
-      # Maintainer signs and publishes afterward (see RELEASE_CHECKLIST.md).
-      - name: Attach archives to draft release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
-        with:
-          name: shellsentry ${{ github.ref_name }}
-          body: |
-            ## shellsentry ${{ github.ref_name }}
-            Draft release — incomplete until the maintainer signs and publishes.
-          draft: true
-          prerelease: false
-          files: dist/release/*

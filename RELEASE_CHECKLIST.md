@@ -7,8 +7,9 @@ This document walks maintainers through the signed-tag, build, sign, and publish
 > earlier used `SHA2-512SUMS`. The self-update code falls back gracefully.
 
 Signing and publish scripts run on the maintainer's machine only. They refuse
-`GITHUB_ACTIONS`. CI builds unsigned archives and attaches them to a **draft**
-GitHub release; it never tags, signs, or publishes.
+`GITHUB_ACTIONS`. CI builds unsigned archives and uploads them as workflow
+artifacts; it never tags, signs, creates a GitHub Release, or publishes. The
+maintainer opens the draft locally with `make release-create-draft`.
 
 For v0.1.8, `VERSION`, `CHANGELOG.md`, `RELEASE_NOTES.md`, and
 `docs/releases/v0.1.8.md` are already on `main`. Start at the signed-tag step
@@ -58,13 +59,14 @@ Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
 - [ ] Confirm the remote object equals the local one and GitHub reports Verified with reason `valid`: `make release-verify-remote-tag`
 - [ ] Wait for GitHub Actions release workflow to complete
   - CI validates VERSION file matches tag
-  - The `build` job (contents: read) builds unsigned archives for the five
-    platform matrix and uploads them as artifacts
-  - The `upload` job (contents: write) attaches those archives plus
-    `install-shellsentry.sh` to a **draft** GitHub release
-  - CI cannot publish; the draft stays unpublished until after signing
+  - The `verify-anchors` job installs digest-pinned Decernor and checks the
+    committed public anchors
+  - The `build` job (`contents: read`, `ubuntu-24.04`) builds unsigned
+    archives for the five-platform matrix and uploads them as artifacts
+  - CI never creates a GitHub Release and never requests `contents: write`
+  - A green tag run is a consistency signal, not release authorization
 
-## 2. Manual Signing (local machine)
+## 2. Stage packages, open draft, and sign (local machine)
 
 ```bash
 export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
@@ -82,11 +84,18 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    make release-clean
    ```
 
-2. **Download draft artifacts**
+2. **Stage unsigned packages** into `dist/release/`
+
+   There is no GitHub Release yet. Copy the five archives from the tag
+   workflow artifacts, or build them locally:
 
    ```bash
-   make release-download
+   make package-all
    ```
+
+   Expected names: `shellsentry_linux_amd64.tar.gz`,
+   `shellsentry_linux_arm64.tar.gz`, `shellsentry_windows_amd64.zip`,
+   `shellsentry_windows_arm64.zip`, `shellsentry_darwin_arm64.tar.gz`.
 
 3. **Generate checksum manifests** (`SHA256SUMS`, `SHA512SUMS`)
 
@@ -94,13 +103,24 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    make release-checksums
    ```
 
+   Also copies `scripts/install-shellsentry.sh` into `dist/release/`.
+
 4. **Verify checksums**
 
    ```bash
    make release-verify-checksums
    ```
 
-5. **Sign checksum manifests** with minisign + PGP
+5. **Create the draft GitHub release** from the staged packages
+
+   ```bash
+   make release-create-draft
+   ```
+
+   Runs `gh release create --verify-tag --draft`. Refuses GitHub Actions
+   and refuses if a release for the tag already exists.
+
+6. **Sign checksum manifests** with minisign + PGP
 
    ```bash
    make release-sign
@@ -108,19 +128,19 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
 
    Produces: `SHA256SUMS`, `SHA512SUMS` plus `.minisig`/`.asc`
 
-6. **Verify signatures**
+7. **Verify signatures**
 
    ```bash
    make release-verify-signatures
    ```
 
-7. **Export public keys**
+8. **Export public keys**
 
    ```bash
    make release-export-keys
    ```
 
-8. **Verify exported keys**
+9. **Verify exported keys**
 
    ```bash
    make release-verify-keys
@@ -132,13 +152,13 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    make release-verify
    ```
 
-9. **Copy release notes** (requires `docs/releases/$SHELLSENTRY_RELEASE_TAG.md`)
+10. **Copy release notes** (requires `docs/releases/$SHELLSENTRY_RELEASE_TAG.md`)
 
-   ```bash
-   make release-notes
-   ```
+    ```bash
+    make release-notes
+    ```
 
-10. **Upload signatures and keys** (draft is preserved)
+11. **Upload signatures and keys** (draft is preserved)
 
     ```bash
     make release-upload
