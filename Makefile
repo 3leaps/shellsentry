@@ -85,7 +85,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft
 .PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
-.PHONY: dogfood assert-no-pipe-install-sfetch check-sfetch-pin-freshness
+.PHONY: dogfood assert-no-pipe-install-sfetch test-no-pipe-to-shell-docs check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-assert-tool-pins test-bootstrap-negative-controls
 
 all: build
@@ -267,6 +267,7 @@ precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	$(MAKE) test-gosec-pin
 	$(MAKE) gosec-high
 	$(MAKE) release-tag-tests
+	$(MAKE) test-no-pipe-to-shell-docs
 	@echo "[ok] Pre-commit checks passed"
 
 prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select test-assert-tool-pins assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
@@ -602,6 +603,9 @@ version-major: ## Bump major version
 
 assert-no-pipe-install-sfetch: ## Fail if install-sfetch.sh is still piped to bash/sh
 	@./scripts/assert-no-pipe-install-sfetch.sh
+
+test-no-pipe-to-shell-docs: ## Regression: docs do not recommend curl piped to a shell
+	@./scripts/test-no-pipe-to-shell-docs.sh
 
 assert-sfetch-pin-coupling: ## Fail if CI action SHA/version drift from Makefile pins
 	@./scripts/assert-sfetch-pin-coupling.sh
