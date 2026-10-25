@@ -23,6 +23,9 @@ grep -Fq 'export GNUPGHOME="$SHELLSENTRY_GPG_HOMEDIR"' "$TAG_SH" ||
 if grep -nE 'gpgconf[[:space:]]+--homedir[[:space:]]+"\$SHELLSENTRY_GPG_HOMEDIR"' "$TAG_SH"; then
     fail "release-tag.sh must not gpgconf --kill the operator homedir"
 fi
+if grep -nE 'gpgconf[[:space:]]+([^ ]|[[:space:]])*--kill' "$TAG_SH"; then
+    fail "release-tag.sh must not gpgconf --kill (including via GNUPGHOME)"
+fi
 if grep -nE 'mktemp .*tag-sign|sign_home=' "$TAG_SH"; then
     fail "release-tag.sh must not copy secrets into a throwaway signing home"
 fi
@@ -53,6 +56,13 @@ if grep -nE 'gpgconf[[:space:]]+--homedir[[:space:]]+"\$SHELLSENTRY_GPG_HOMEDIR"
     pass "grep rejects an operator-home gpgconf --kill mutant"
 else
     fail "operator gpgconf --kill mutant was not distinguished from the live script"
+fi
+printf '%s\n' 'export GNUPGHOME="$SHELLSENTRY_GPG_HOMEDIR"' 'gpgconf --kill all' >"$scratch/bare-kill.sh"
+if grep -nE 'gpgconf[[:space:]]+([^ ]|[[:space:]])*--kill' "$scratch/bare-kill.sh" >/dev/null &&
+    ! grep -nE 'gpgconf[[:space:]]+([^ ]|[[:space:]])*--kill' "$TAG_SH" >/dev/null; then
+    pass "grep rejects a bare gpgconf --kill mutant"
+else
+    fail "bare gpgconf --kill mutant was not distinguished from the live script"
 fi
 
 command -v gpg >/dev/null 2>&1 || fail "gpg required"
@@ -100,14 +110,37 @@ for arg in "$@"; do
     esac
     prev="$arg"
 done
-if [[ "$kill" == 1 && -n "$homedir" && "$homedir" == "${OPERATOR_HOME:?}" ]]; then
+# Bare `gpgconf --kill` uses GNUPGHOME when --homedir is omitted.
+effective="${homedir:-${GNUPGHOME:-}}"
+if [[ "$kill" == 1 && -n "$effective" && "$effective" == "${OPERATOR_HOME:?}" ]]; then
     printf 'attempted\n' >>"${OPERATOR_AGENT_MARKER:?}"
     echo 'fixture: operator agent must stay running' >&2
     exit 91
 fi
 exec "${REAL_GPGCONF:?}" "$@"
 SH
-chmod +x "$scratch/bin/gpg" "$scratch/bin/gpgconf"
+cat >"$scratch/bin/gpgconf.homedir-only" <<'SH'
+#!/usr/bin/env bash
+homedir=""
+kill=0
+prev=""
+for arg in "$@"; do
+    if [[ "$prev" == --homedir ]]; then
+        homedir="$arg"
+    fi
+    case "$arg" in
+    --kill) kill=1 ;;
+    esac
+    prev="$arg"
+done
+if [[ "$kill" == 1 && -n "$homedir" && "$homedir" == "${OPERATOR_HOME:?}" ]]; then
+    printf 'attempted\n' >>"${OPERATOR_AGENT_MARKER:?}"
+    echo 'fixture: operator agent must stay running' >&2
+    exit 91
+fi
+exit 0
+SH
+chmod +x "$scratch/bin/gpg" "$scratch/bin/gpgconf" "$scratch/bin/gpgconf.homedir-only"
 
 fixture="$scratch/repo"
 git init -q -b main "$fixture"
@@ -142,6 +175,19 @@ fi
 rm -f "$NO_EXPORT_MARKER"
 : >"$GNUPGHOME_LOG"
 
+# Prove the stub refuses a bare kill while GNUPGHOME is the operator home.
+if GNUPGHOME="$op" gpgconf --kill all >/dev/null 2>&1; then
+    fail "gpgconf stub must refuse --kill when GNUPGHOME is the operator home"
+fi
+[[ -s "$OPERATOR_AGENT_MARKER" ]] || fail "bare gpgconf --kill did not record the attempt"
+rm -f "$OPERATOR_AGENT_MARKER"
+if GNUPGHOME="$op" "$scratch/bin/gpgconf.homedir-only" --kill all >/dev/null 2>&1; then
+    pass "homedir-only gpgconf mutant misses a GNUPGHOME kill"
+else
+    fail "homedir-only gpgconf mutant must not catch a bare --kill"
+fi
+[[ ! -e "$OPERATOR_AGENT_MARKER" ]] || fail "homedir-only mutant recorded a kill it should miss"
+
 fake_home="$scratch/home"
 mkdir -p "$fake_home/.gnupg"
 chmod 700 "$fake_home/.gnupg"
@@ -170,5 +216,32 @@ if grep -E '/shs-tag-sign\.|/tmp/[^/]*tag-sign' "$GNUPGHOME_LOG"; then
 fi
 [[ "$(git -C "$fixture" cat-file -t "refs/tags/v0.0.0")" == tag ]] || fail "signed annotated tag missing"
 pass "fixture signs without exporting secrets or killing the operator agent"
+
+# Mutant: insert a bare gpgconf --kill after the GNUPGHOME bind.
+git -C "$fixture" tag -d v0.0.0 >/dev/null
+awk '
+    { print }
+    /export GNUPGHOME=/ { print "gpgconf --kill all" }
+' "$TAG_SH" >"$fixture/scripts/release-tag.sh"
+chmod +x "$fixture/scripts/release-tag.sh"
+grep -q 'gpgconf --kill all' "$fixture/scripts/release-tag.sh" ||
+    fail "bare-kill mutant was not constructed"
+git -C "$fixture" add scripts/release-tag.sh
+git -C "$fixture" -c commit.gpgsign=false commit -qm 'mutant: bare gpgconf --kill'
+rm -f "$OPERATOR_AGENT_MARKER" "$NO_EXPORT_MARKER"
+: >"$GNUPGHOME_LOG"
+set +e
+(cd "$fixture" && ./scripts/release-tag.sh) >"$scratch/mut-kill.out" 2>&1
+mut_rc=$?
+set -e
+if [ "$mut_rc" -eq 0 ]; then
+    cat "$scratch/mut-kill.out" >&2
+    fail "bare gpgconf --kill mutant must not succeed"
+fi
+[[ -s "$OPERATOR_AGENT_MARKER" ]] || {
+    cat "$scratch/mut-kill.out" >&2
+    fail "bare gpgconf --kill mutant was not caught while GNUPGHOME was the operator home"
+}
+pass "bare gpgconf --kill while GNUPGHOME is the operator home is refused"
 
 echo "[ok] smartcard tag signing controls"

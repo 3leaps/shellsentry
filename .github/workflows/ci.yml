@@ -14,8 +14,8 @@ env:
   GH_TOKEN: ${{ github.token }}
   SFETCH_GITHUB_TOKEN: ${{ github.token }}
   # Keep in sync with Makefile SFETCH_ACTION_SHA / SFETCH_VERSION (assert-sfetch-pin-coupling).
-  SFETCH_ACTION_SHA: d0ad13eb352c18f56604c483c733d425af6e9763
-  SFETCH_VERSION: v0.4.13
+  SFETCH_ACTION_SHA: c44577261902c848119d3c89b0138becb613b158
+  SFETCH_VERSION: v0.4.15
   GONEAT_VERSION: v0.6.6
 
 jobs:
@@ -48,9 +48,9 @@ jobs:
           echo "[ok] clean-runner preflight: no ambient sfetch/goneat/minisign"
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763  # v0.4.13
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@c44577261902c848119d3c89b0138becb613b158  # v0.4.15
         with:
-          sfetch-version: v0.4.13
+          sfetch-version: v0.4.15
           install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch (pinned)
@@ -133,9 +133,9 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763  # v0.4.13
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@c44577261902c848119d3c89b0138becb613b158  # v0.4.15
         with:
-          sfetch-version: v0.4.13
+          sfetch-version: v0.4.15
           install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch (pinned)
@@ -215,9 +215,9 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763  # v0.4.13
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@c44577261902c848119d3c89b0138becb613b158  # v0.4.15
         with:
-          sfetch-version: v0.4.13
+          sfetch-version: v0.4.15
           install-dir: ${{ github.workspace }}/bin
 
       - name: Install goneat via sfetch
@@ -276,9 +276,9 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763  # v0.4.13
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@c44577261902c848119d3c89b0138becb613b158  # v0.4.15
         with:
-          sfetch-version: v0.4.13
+          sfetch-version: v0.4.15
           install-dir: ${{ github.workspace }}/bin
 
       - name: Verify install script detects windows arm64

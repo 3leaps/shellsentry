@@ -7,6 +7,8 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-25
+
 ### Fixed
 
 - **Pinned gosec in CI.** `gosec` is pinned to v2.29.0 (`go install` into
@@ -28,6 +30,9 @@ Semantic Versioning.
   version line without piping through `head`, so extra output cannot exit 141
   under `set -o pipefail`. `scripts/test-assert-tool-pins.sh` fails if the
   piped-head path is restored.
+- **Operator-home agent kill via `GNUPGHOME`.** The smartcard fixture refuses
+  a bare `gpgconf --kill` while `GNUPGHOME` is the operator home, not only
+  an explicit `--homedir`.
 
 ### Added
 
@@ -45,6 +50,9 @@ Semantic Versioning.
   into a throwaway keyring, so hardware-backed subkeys can sign. Cleanup
   never `gpgconf --kill`s the operator agent. Public-pin verification stays
   on a disposable keyring.
+- **Verified bootstrap pin.** sfetch v0.4.15, engine and action commit
+  `c44577261902c848119d3c89b0138becb613b158` (peeled signed tag). goneat
+  stays v0.6.6.
 
 ## [0.1.7] - 2026-10-21
 
@@ -205,7 +213,8 @@ Semantic Versioning.
 - Pinned tool minimums: sfetch v0.3.1 and goneat v0.4.0 (existing installs respected).
 - Normalized formatting across docs, schemas, and testdata with goneat format.
 
-[Unreleased]: https://github.com/3leaps/shellsentry/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/3leaps/shellsentry/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/3leaps/shellsentry/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/3leaps/shellsentry/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/3leaps/shellsentry/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/3leaps/shellsentry/compare/v0.1.4...v0.1.5

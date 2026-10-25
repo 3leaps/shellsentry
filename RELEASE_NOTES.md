@@ -2,6 +2,59 @@
 
 Note: Keep only the latest three releases here, in newest-to-oldest order.
 
+## v0.1.8
+
+### Highlights
+
+- Tag-push CI only creates a draft GitHub release.
+- `make release-tag` signs a local annotated tag from the operator GPG home
+  (smartcard / non-exportable subkeys). `make release-publish` promotes only
+  after a byte-for-byte draft check.
+- Every GitHub Actions `uses:` is a commit SHA with a version comment.
+- `gosec` is pinned to v2.29.0 and fails closed when missing or mismatched.
+- Verified bootstrap consumes sfetch v0.4.15.
+
+### Changed
+
+- Tag signing binds `GNUPGHOME` to `SHELLSENTRY_GPG_HOMEDIR` and does not
+  export secret keys or `gpgconf --kill` the operator agent. Public-pin
+  verification stays on a disposable keyring.
+- Bootstrap: sfetch v0.4.15, engine and action
+  `c44577261902c848119d3c89b0138becb613b158`. goneat stays v0.6.6.
+
+### Fixed
+
+- `gosec` is installed at v2.29.0 into `bin/`. `make gosec-high` fails closed
+  if it is missing or if the binary on PATH does not match `GOSEC_VERSION`.
+- Release workflow: `draft: true` on every `action-gh-release` step; build is
+  `contents: read` and only uploads artifacts; a separate upload job with
+  `contents: write` attaches them to the draft.
+- Workflow actions, including `actions/checkout` and `actions/setup-go`, are
+  40-character commit SHAs. Artifact actions are both v7.
+  `scripts/test-workflow-action-pins.py` fails if a pin is reverted to a tag.
+- `make assert-tool-pins` takes the first version line without piping through
+  `head`, so extra output cannot SIGPIPE the pin check.
+- The smartcard fixture refuses a bare `gpgconf --kill` while `GNUPGHOME` is
+  the operator home.
+
+### Added
+
+- `make release-tag` creates a local signed annotated tag and verifies it
+  against the committed public pin. `make release-publish` re-downloads the
+  draft, byte-compares `SHA256SUMS` and every listed asset, then publishes.
+  Tagging, upload, and publish scripts refuse `GITHUB_ACTIONS`.
+
+### Upgrading
+
+Self-update from v0.1.7 works. Binaries through v0.1.6 still need a one-time
+reinstall under the current keys:
+
+```bash
+curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.8/install-shellsentry.sh | bash -s -- --tag v0.1.8
+```
+
+---
+
 ## v0.1.7
 
 ### Highlights
@@ -68,43 +121,3 @@ Self-update works again from v0.1.7 onward.
 ### Pins
 
 - sfetch v0.4.11, goneat v0.5.15.
-
----
-
-## v0.1.5
-
-### Highlights
-
-- Package and CI/CD hygiene: PR CI, modern Node 24-era Actions, verified bootstrap pins.
-- Release verification is fail-closed; upload requires the full verify chain.
-- darwin/amd64 (Intel Mac) artifacts dropped; last supporting release is v0.1.4.
-
-### Added
-
-- PR/main CI covering Linux amd64/arm64 and Windows amd64/arm64 (org named runners for ARM64).
-- Fail-closed checksum verification regression harness.
-- Pinned govulncheck v1.6.0 in local and CI quality gates.
-
-### Changed
-
-- Go 1.25.12 / toolchain 1.26.5; module bumps for go-minisign, mvdan/sh, x/crypto, x/sys.
-- Bootstrap: sfetch v0.4.9 + goneat v0.5.15 into repo-local `bin/` with minisign and exact tags.
-- Release workflow uses softprops/action-gh-release@v3 (replaces archived Node12 create/upload actions).
-- go-licenses pinned to v1.5.0 on the release path.
-
-### Removed
-
-- `shellsentry_darwin_amd64.tar.gz` is no longer published.
-- Intel Mac recovery:
-
-```bash
-curl -sSfL https://github.com/3leaps/shellsentry/releases/download/v0.1.4/install-shellsentry.sh | bash -s -- --tag v0.1.4
-```
-
-### Supported platforms from v0.1.5
-
-| OS      | Architectures   |
-| ------- | --------------- |
-| Linux   | amd64, arm64    |
-| macOS   | arm64           |
-| Windows | amd64, arm64    |
