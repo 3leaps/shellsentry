@@ -27,7 +27,9 @@ endif
 INSTALL_TARGET ?= $(INSTALL_BINDIR)/$(NAME)$(EXT)
 BUILD_ARTIFACT := bin/$(NAME)_$(GOOS)_$(GOARCH)$(EXT)
 DIST_RELEASE := dist/release
-RELEASE_TAG ?= $(if $(SHELLSENTRY_RELEASE_TAG),$(SHELLSENTRY_RELEASE_TAG),$(shell git describe --tags --abbrev=0 2>/dev/null || echo v$(VERSION)))
+# The release tag is an explicit input (SHELLSENTRY_RELEASE_TAG only).
+# A Makefile ?= that lets an inherited bare variable win is a derived input
+# and is not accepted (bare RELEASE_TAG is not accepted).
 PUBLIC_KEY_NAME ?= shellsentry-release-signing-key.asc
 SHELLSENTRY_MINISIGN_KEY ?=
 SHELLSENTRY_MINISIGN_PUB ?=
@@ -78,6 +80,9 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
 .PHONY: release-clean bootstrap-script verify-release-key
+.PHONY: release-tag release-verify-tag release-publish release-tag-tests require-release-tag
+.PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft
+.PHONY: test-release-tag test-release-publish test-verify-pinned-tag
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
 .PHONY: dogfood assert-no-pipe-install-sfetch check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-bootstrap-negative-controls
@@ -260,7 +265,7 @@ govulncheck: ## Run pinned govulncheck vulnerability scan
 precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	$(MAKE) test-gosec-pin
 	$(MAKE) gosec-high
-	$(MAKE) test-release-workflow-draft
+	$(MAKE) release-tag-tests
 	@echo "[ok] Pre-commit checks passed"
 
 prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
@@ -316,9 +321,32 @@ package-all: build-all ## Package release archives in dist/release
 	done; \
 	echo "[ok] Packaged archives to dist/release/"
 
-release-download: ## Download release assets for signing
+# Tag-consuming recipes refuse a bare RELEASE_TAG (not accepted) and require
+# SHELLSENTRY_RELEASE_TAG == v$(VERSION). Expanding $(RELEASE_TAG) here is only to
+# detect it. require-release-tag is a real prerequisite so the check runs
+# before any other prerequisite of a tag-consuming target.
+define require_shellsentry_release_tag
+	@if [ "$(origin RELEASE_TAG)" != "undefined" ]; then echo "error: RELEASE_TAG is not accepted; set SHELLSENTRY_RELEASE_TAG only" >&2; exit 1; fi
+	@if [ -z "$(SHELLSENTRY_RELEASE_TAG)" ]; then echo "error: SHELLSENTRY_RELEASE_TAG required" >&2; exit 1; fi
+	@printf '%s\n' "$(SHELLSENTRY_RELEASE_TAG)" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { echo "error: SHELLSENTRY_RELEASE_TAG must be canonical vX.Y.Z" >&2; exit 1; }
+	@if [ "$(SHELLSENTRY_RELEASE_TAG)" != "v$(VERSION)" ]; then echo "error: SHELLSENTRY_RELEASE_TAG ($(SHELLSENTRY_RELEASE_TAG)) must equal v$(VERSION)" >&2; exit 1; fi
+endef
+
+require-release-tag:
+	$(call require_shellsentry_release_tag)
+
+release-tag: require-release-tag ## Maintainer-only: create and verify a local signed version tag (no push)
+	@./scripts/release-tag.sh
+
+release-verify-tag: require-release-tag ## Verify the tag using only the committed public pin
+	@./scripts/verify-pinned-tag.sh
+
+release-publish: require-release-tag ## Maintainer-only: byte-verify draft assets, then promote
+	@./scripts/release-publish.sh "$(SHELLSENTRY_RELEASE_TAG)" "$(DIST_RELEASE)"
+
+release-download: require-release-tag ## Download release assets for signing
 	@mkdir -p $(DIST_RELEASE)
-	./scripts/download-release-assets.sh $(RELEASE_TAG) $(DIST_RELEASE)
+	./scripts/download-release-assets.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
 
 bootstrap-script: ## Copy install script into release directory
 	@mkdir -p $(DIST_RELEASE)
@@ -364,19 +392,46 @@ test-gosec-pin: ## Regression: gosec pin and fail-closed missing-binary guard
 test-release-workflow-draft: ## Regression: every release-writing action preserves draft state
 	@python3 ./scripts/test-release-workflow-draft.py
 
-release-notes: ## Copy release notes into dist/release
-	@if [ -z "$(RELEASE_TAG)" ]; then echo "error: RELEASE_TAG not set" >&2; exit 1; fi
+test-release-ci-hygiene: ## Regression: workflows never invoke signing or publish scripts
+	@./scripts/test-release-ci-hygiene.sh
+
+test-makefile-release-tag: ## Regression: Makefile refuses bare RELEASE_TAG (not accepted)
+	@./scripts/test-makefile-release-tag.sh
+
+test-upload-release-draft: ## Regression: release-upload stays a draft
+	@./scripts/test-upload-release-draft.sh
+
+test-release-tag: ## Regression: signed tag stays local and refuses GitHub Actions
+	@./scripts/test-release-tag.sh
+
+test-release-publish: ## Regression: publish promotes only a byte-verified draft
+	@./scripts/test-release-publish.sh
+
+test-verify-pinned-tag: ## Regression: signed tag verifies against the committed public pin
+	@./scripts/verify-pinned-tag.test.sh
+
+release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the default homedir)
+	@$(MAKE) test-release-workflow-draft
+	@$(MAKE) test-release-ci-hygiene
+	@$(MAKE) test-makefile-release-tag
+	@$(MAKE) test-upload-release-draft
+	@$(MAKE) test-release-tag
+	@$(MAKE) test-release-publish
+	@$(MAKE) test-verify-pinned-tag
+	@echo "[ok] Release tag tooling tests passed"
+
+release-notes: require-release-tag ## Copy release notes into dist/release
 	@mkdir -p $(DIST_RELEASE)
-	@src="docs/releases/$(RELEASE_TAG).md"; \
+	@src="docs/releases/$(SHELLSENTRY_RELEASE_TAG).md"; \
 	if [ ! -f "$$src" ]; then \
-		echo "error: release notes file $$src not found (did you set RELEASE_TAG?)" >&2; \
+		echo "error: release notes file $$src not found (did you set SHELLSENTRY_RELEASE_TAG?)" >&2; \
 		exit 1; \
 	fi; \
-	cp "$$src" "$(DIST_RELEASE)/release-notes-$(RELEASE_TAG).md"
+	cp "$$src" "$(DIST_RELEASE)/release-notes-$(SHELLSENTRY_RELEASE_TAG).md"
 	@echo "[ok] Release notes copied to $(DIST_RELEASE)"
 
-release-sign: release-checksums ## Sign checksum manifests
-	SHELLSENTRY_MINISIGN_KEY=$(SHELLSENTRY_MINISIGN_KEY) SHELLSENTRY_PGP_KEY_ID=$(SHELLSENTRY_PGP_KEY_ID) SHELLSENTRY_GPG_HOMEDIR=$(SHELLSENTRY_GPG_HOMEDIR) ./scripts/sign-release-assets.sh $(RELEASE_TAG) $(DIST_RELEASE)
+release-sign: require-release-tag ## Sign checksum manifests
+	SHELLSENTRY_MINISIGN_KEY=$(SHELLSENTRY_MINISIGN_KEY) SHELLSENTRY_PGP_KEY_ID=$(SHELLSENTRY_PGP_KEY_ID) SHELLSENTRY_GPG_HOMEDIR=$(SHELLSENTRY_GPG_HOMEDIR) ./scripts/sign-release-assets.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
 
 release-export-key: ## Export PGP public key to dist/release
 	SHELLSENTRY_GPG_HOMEDIR=$(SHELLSENTRY_GPG_HOMEDIR) ./scripts/export-release-key.sh $(SHELLSENTRY_PGP_KEY_ID) $(DIST_RELEASE)
@@ -439,8 +494,8 @@ release-verify-signatures: ## Verify minisign and PGP signatures on checksum man
 
 release-verify: release-verify-checksums release-verify-signatures release-verify-keys ## Full post-signing release verification
 
-release-upload: release-notes release-verify ## Upload assets (requires full verification chain)
-	./scripts/upload-release-assets.sh $(RELEASE_TAG) $(DIST_RELEASE)
+release-upload: require-release-tag release-notes release-verify ## Upload assets (requires full verification chain)
+	./scripts/upload-release-assets.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
 
 release-clean: ## Remove dist/release contents
 	rm -rf $(DIST_RELEASE)

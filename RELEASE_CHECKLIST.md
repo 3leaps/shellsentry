@@ -1,12 +1,24 @@
 # Release Checklist
 
-This document walks maintainers through the build/sign/upload flow for each shellsentry release.
+This document walks maintainers through the signed-tag, build, sign, and publish flow for each shellsentry release.
 
 > **Naming note:** Starting with v0.1.4, checksum manifests use `SHA512SUMS`
 > (aligned with sfetch and conventional `sha512sum` naming). Releases v0.1.3 and
 > earlier used `SHA2-512SUMS`. The self-update code falls back gracefully.
 
-## 1. Prepare & Tag
+Signing and publish scripts run on the maintainer's machine only. They refuse
+`GITHUB_ACTIONS`. CI builds unsigned archives and attaches them to a **draft**
+GitHub release; it never tags, signs, or publishes.
+
+Set the canonical tag (must equal `v$(cat VERSION)`):
+
+```bash
+export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
+```
+
+Bare `RELEASE_TAG` is not accepted.
+
+## 1. Prepare & signed tag (local)
 
 - [ ] Ensure `main` is clean and `make prepush` passes
 - [ ] Update `VERSION` file with new semver (e.g., `0.1.0`)
@@ -14,28 +26,38 @@ This document walks maintainers through the build/sign/upload flow for each shel
 - [ ] Update `RELEASE_NOTES.md`
 - [ ] Create `docs/releases/vX.Y.Z.md`
 - [ ] Commit: `git add -A && git commit -m "release: prepare vX.Y.Z"`
-- [ ] Push and tag:
+- [ ] Push `main`
+- [ ] Create the signed annotated tag locally (does not push):
+
   ```bash
-  git push origin main
-  git tag v$(cat VERSION)
-  git push origin v$(cat VERSION)
+  export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
+  export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
+  export SHELLSENTRY_GPG_HOMEDIR=/path/to/isolated/gpg/homedir   # not ~/.gnupg, not inside the repo
+  make release-tag
   ```
+
+  `make release-tag` imports the signing subkey into a throwaway GNUPGHOME,
+  creates an annotated signed tag, and verifies it against the public pin
+  committed in the tagged commit (`docs/security/release-signing-keys.asc` and
+  `keys/expected-fingerprints.txt`). Re-check with `make release-verify-tag`.
+
+- [ ] Push the already-signed tag: `git push origin "$SHELLSENTRY_RELEASE_TAG"`
 - [ ] Wait for GitHub Actions release workflow to complete
   - CI validates VERSION file matches tag
-  - Builds unsigned archives
-  - Creates a **draft** GitHub release and uploads install-shellsentry.sh plus archives
+  - The `build` job (contents: read) builds unsigned archives for the five
+    platform matrix and uploads them as artifacts
+  - The `upload` job (contents: write) attaches those archives plus
+    `install-shellsentry.sh` to a **draft** GitHub release
   - CI cannot publish; the draft stays unpublished until after signing
 
 ## 2. Manual Signing (local machine)
-
-Set environment variables:
 
 ```bash
 export SHELLSENTRY_RELEASE_TAG=v$(cat VERSION)
 export SHELLSENTRY_MINISIGN_KEY=/path/to/shellsentry.key
 export SHELLSENTRY_MINISIGN_PUB=/path/to/shellsentry.pub
-export SHELLSENTRY_PGP_KEY_ID="security@3leaps.net"        # or your-subkey-id!
-export SHELLSENTRY_GPG_HOMEDIR=/path/to/custom/gpg/homedir   # optional, defaults to ~/.gnupg
+export SHELLSENTRY_PGP_KEY_ID=<40-hex-signing-subkey>!
+export SHELLSENTRY_GPG_HOMEDIR=/path/to/isolated/gpg/homedir
 ```
 
 ### Steps
@@ -46,7 +68,7 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/custom/gpg/homedir   # optional, default
    make release-clean
    ```
 
-2. **Download artifacts**
+2. **Download draft artifacts**
 
    ```bash
    make release-download
@@ -102,19 +124,28 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/custom/gpg/homedir   # optional, default
    make release-notes
    ```
 
-10. **Upload signatures and keys**
+10. **Upload signatures and keys** (draft is preserved)
 
     ```bash
     make release-upload
     ```
 
-    > **Note:** This uploads ALL assets with `--clobber`, including binaries CI already uploaded.
-    > This is intentional for idempotency - rerun safely to fix any mistakes.
+    Uploads assets with `--clobber` and edits notes with `--draft=true`.
+    Promotion is the next step, after byte verification.
 
-## 3. Post-Release
+## 3. Publish (byte-verified)
 
-- [ ] Publish the signed draft: `gh release edit v$(cat VERSION) --draft=false`
-- [ ] Verify release: `gh release view v$(cat VERSION)`
+- [ ] Promote only after the draft matches local `SHA256SUMS` byte-for-byte:
+
+  ```bash
+  make release-publish
+  ```
+
+  `release-publish` refuses a non-draft release, re-downloads the draft,
+  `cmp`s `SHA256SUMS` and every listed file against the local tree, then
+  runs `gh release edit --draft=false`.
+
+- [ ] Verify release: `gh release view "$SHELLSENTRY_RELEASE_TAG"`
 - [ ] Test install script: `curl -sSfL .../install-shellsentry.sh | bash -s -- --dry-run`
 - [ ] Verify binary version: `shellsentry --version` shows correct version
 - [ ] Announce release
@@ -139,7 +170,10 @@ Check current version anytime with `make version-check`.
 
 If rotating signing keys, also update:
 
-- [ ] `scripts/install-shellsentry.sh` - embedded `SHELLSENTRY_MINISIGN_PUBKEY`
+- [ ] `docs/security/release-signing-keys.asc` - committed GPG public pin
+- [ ] `docs/security/shellsentry-minisign.pub` and `configs/keys/shellsentry-minisign.pub`
+- [ ] `keys/expected-fingerprints.txt` - GPG primary fingerprint and minisign key SHA-256
+- [ ] `scripts/install-shellsentry.sh` - embedded `SHELLSENTRY_MINISIGN_PUBKEY` and `SHELLSENTRY_PGP_FPR`
 - [ ] `README.md` - verification snippet public key
 - [ ] Any external documentation referencing shellsentry signing keys
 

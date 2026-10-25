@@ -13,35 +13,10 @@ env:
   NAME: shellsentry
 
 jobs:
-  create_release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-
-      # softprops/action-gh-release@v3 (Node 24) replaces the archived,
-      # Node12-era actions/create-release@v1 + actions/upload-release-asset@v1.
-      # It creates a draft for the pushed tag (idempotent) and uploads the
-      # install script. The build matrix below appends per-platform archives.
-      # Maintainer signs + publishes afterward via scripts/ (see RELEASE_CHECKLIST.md).
-      # Every release-writing action must set draft: true so CI cannot publish.
-      - name: Create draft release and upload install script
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
-        with:
-          name: shellsentry ${{ github.ref_name }}
-          body: |
-            ## shellsentry ${{ github.ref_name }}
-            Draft release — incomplete until the maintainer signs and publishes.
-          draft: true
-          prerelease: false
-          files: scripts/install-shellsentry.sh
-
   build:
-    needs: create_release
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -106,28 +81,50 @@ jobs:
             (cd bin && mv "${ASSET}.exe" "shellsentry.exe")
             zip -j "${ARCHIVE}" "bin/shellsentry.exe"
             (cd bin && mv "shellsentry.exe" "${ASSET}.exe")
-            CONTENT_TYPE="application/zip"
           else
             ARCHIVE="${ASSET}.tar.gz"
             (cd bin && mv "${ASSET}" shellsentry)
             tar czf "${ARCHIVE}" -C bin shellsentry
             (cd bin && mv shellsentry "${ASSET}")
-            CONTENT_TYPE="application/gzip"
           fi
           echo "ASSET_FILE=${ARCHIVE}" >> "$GITHUB_ENV"
-          echo "ASSET_CONTENT_TYPE=${CONTENT_TYPE}" >> "$GITHUB_ENV"
 
-      # Reopens the same release as a draft while appending this matrix entry's
-      # archive. Every release-writing action must state draft: true so parallel
-      # uploads cannot publish before signing.
-      - name: Upload Archive
+      - name: Upload packaged archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: shellsentry_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: ${{ env.ASSET_FILE }}
+          if-no-files-found: error
+          retention-days: 30
+
+  upload:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download packed archives
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5.0.0
+        with:
+          path: dist/release
+          merge-multiple: true
+
+      - name: Copy install script
+        run: |
+          mkdir -p dist/release
+          cp scripts/install-shellsentry.sh dist/release/install-shellsentry.sh
+
+      # Every release-writing action must set draft: true so CI cannot publish.
+      # Maintainer signs and publishes afterward (see RELEASE_CHECKLIST.md).
+      - name: Attach archives to draft release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
+          name: shellsentry ${{ github.ref_name }}
+          body: |
+            ## shellsentry ${{ github.ref_name }}
+            Draft release — incomplete until the maintainer signs and publishes.
           draft: true
-          files: ${{ env.ASSET_FILE }}
-
-      - name: Signing handled manually
-        # NOTE: actionlint rejects constant expressions like `${{ false }}`.
-        # Keep this step effectively disabled while leaving a breadcrumb.
-        if: ${{ github.ref == 'refs/tags/__disabled__' }}
-        run: echo "Signing occurs via scripts/sign-release-assets.sh after CI"
+          prerelease: false
+          files: dist/release/*
