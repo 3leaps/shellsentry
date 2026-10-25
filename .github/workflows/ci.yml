@@ -23,9 +23,9 @@ jobs:
     name: Linux quality (amd64)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
 
@@ -48,7 +48,7 @@ jobs:
           echo "[ok] clean-runner preflight: no ambient sfetch/goneat/minisign"
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763  # v0.4.13
         with:
           sfetch-version: v0.4.13
           install-dir: ${{ github.workspace }}/bin
@@ -110,9 +110,9 @@ jobs:
     name: Linux quality (arm64)
     runs-on: ubuntu-latest-arm64-s
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
 
@@ -133,7 +133,7 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763  # v0.4.13
         with:
           sfetch-version: v0.4.13
           install-dir: ${{ github.workspace }}/bin
@@ -161,9 +161,9 @@ jobs:
     name: macOS bootstrap smoke (Makefile path)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
 
@@ -197,9 +197,9 @@ jobs:
     name: Windows dogfood (x64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
 
@@ -215,7 +215,7 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763  # v0.4.13
         with:
           sfetch-version: v0.4.13
           install-dir: ${{ github.workspace }}/bin
@@ -258,9 +258,9 @@ jobs:
     name: Windows dogfood (arm64)
     runs-on: windows-latest-arm64-s
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
 
@@ -276,7 +276,7 @@ jobs:
           done
 
       - name: Setup sfetch (verified action)
-        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763
+        uses: 3leaps/sfetch/.github/actions/setup-sfetch@d0ad13eb352c18f56604c483c733d425af6e9763  # v0.4.13
         with:
           sfetch-version: v0.4.13
           install-dir: ${{ github.workspace }}/bin

@@ -14,10 +14,25 @@ Semantic Versioning.
   exiting 127 when goneat cooling skips a newer `@latest` build. It also
   asserts the binary on PATH matches `GOSEC_VERSION`.
 - **Release workflow cannot publish.** Tag-push CI creates a draft GitHub
-  release (`draft: true` on every `action-gh-release` step). Both uses are
-  pinned to `softprops/action-gh-release` v3.0.3 by commit SHA. Workflow
-  permissions are `contents: read`; only the release-writing jobs take
-  `contents: write`.
+  release (`draft: true` on every `action-gh-release` step, scanned across
+  every workflow file). The action is pinned to `softprops/action-gh-release`
+  v3.0.3 by commit SHA. The `build` job is `contents: read` and only uploads
+  artifacts; a separate `upload` job with `contents: write` attaches them to
+  the draft.
+- **Workflow actions are SHA-pinned.** Every `uses:` in `.github/workflows`
+  is a 40-character commit SHA with a version comment, including
+  `actions/checkout` and `actions/setup-go`. `download-artifact` is v7.0.0 to
+  match `upload-artifact` v7. `scripts/test-workflow-action-pins.py` fails if
+  a pin is reverted to a tag.
+
+### Added
+
+- **Signed-tag release ceremony.** `make release-tag` creates a local signed
+  annotated tag and verifies it against the committed public pin
+  (`docs/security/release-signing-keys.asc`, `keys/expected-fingerprints.txt`).
+  `make release-publish` re-downloads the draft, byte-compares it to local
+  `SHA256SUMS`, then publishes. Tagging and publish scripts refuse
+  `GITHUB_ACTIONS` and do not run in CI.
 
 ## [0.1.7] - 2026-10-21
 
