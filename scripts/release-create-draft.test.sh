@@ -95,11 +95,13 @@ subkey="$(gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$prim
 [[ "$primary" =~ ^[0-9A-F]{40}$ && "$subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'fixture signing key missing'
 
 mkdir -m 700 "$scratch/other-gpg"
-gpg --homedir "$scratch/other-gpg" --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
+# Unset GNUPGHOME so --homedir wins (macOS GnuPG otherwise uses the bound home).
+other_gpg() { env -u GNUPGHOME gpg --homedir "$scratch/other-gpg" "$@"; }
+other_gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
 	'Synthetic other <other@example.invalid>' ed25519 cert 0 >/dev/null 2>&1
-other_primary="$(gpg --homedir "$scratch/other-gpg" --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-gpg --homedir "$scratch/other-gpg" --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$other_primary" ed25519 sign 1d >/dev/null 2>&1
-other_subkey="$(gpg --homedir "$scratch/other-gpg" --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
+other_primary="$(other_gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
+other_gpg --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$other_primary" ed25519 sign 1d >/dev/null 2>&1
+other_subkey="$(other_gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
 
 minisign -G -W -p "$scratch/good.pub" -s "$scratch/good.key" >/dev/null 2>&1 || fail 'minisign keygen failed'
 minisign -G -W -p "$scratch/bad.pub" -s "$scratch/bad.key" >/dev/null 2>&1 || fail 'wrong minisign keygen failed'
@@ -372,7 +374,7 @@ pass 'reverting minisign verification accepts a wrong-key signature'
 
 bad_gpg="$scratch/bad-gpg"
 cp -a "$scratch/dist" "$bad_gpg"
-gpg --homedir "$scratch/other-gpg" --batch --yes --armor --local-user "$other_subkey!" \
+other_gpg --batch --yes --armor --local-user "$other_subkey!" \
 	--detach-sign -o "$bad_gpg/SHA256SUMS.asc" "$bad_gpg/SHA256SUMS"
 if run_draft "$bad_gpg" >/dev/null 2>"$scratch/bad-gpg.err"; then
 	fail 'create-draft must refuse a GPG signature from the wrong key'
@@ -387,13 +389,13 @@ import sys
 text = Path(sys.argv[1]).read_text()
 old = '''verify_pgp() {
 	local manifest="$1"
-	gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$src/$manifest.asc" "$src/$manifest" \\
+	env -u GNUPGHOME gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$src/$manifest.asc" "$src/$manifest" \\
 		>"$work/pgp-$manifest" 2>/dev/null || die "PGP signature for $manifest is invalid under the committed key"
 '''
 new = '''verify_pgp() {
 	local manifest="$1"
 	return 0
-	gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$src/$manifest.asc" "$src/$manifest" \\
+	env -u GNUPGHOME gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$src/$manifest.asc" "$src/$manifest" \\
 		>"$work/pgp-$manifest" 2>/dev/null || die "PGP signature for $manifest is invalid under the committed key"
 '''
 if old not in text:

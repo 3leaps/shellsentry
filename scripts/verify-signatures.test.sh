@@ -71,12 +71,14 @@ subkey="$(gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$prim
 [[ "$primary" =~ ^[0-9A-F]{40}$ && "$subkey" =~ ^[0-9A-F]{40}$ ]] || fail 'fixture signing key missing'
 
 mkdir -m 700 "$scratch/other-gpg"
-gpg --homedir "$scratch/other-gpg" --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
+# Unset GNUPGHOME so --homedir wins (macOS GnuPG otherwise uses the bound home).
+other_gpg() { env -u GNUPGHOME gpg --homedir "$scratch/other-gpg" "$@"; }
+other_gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
 	'Synthetic other <other@example.invalid>' ed25519 cert 0 >/dev/null 2>&1
-other_primary="$(gpg --homedir "$scratch/other-gpg" --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
-gpg --homedir "$scratch/other-gpg" --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$other_primary" ed25519 sign 1d >/dev/null 2>&1
-other_subkey="$(gpg --homedir "$scratch/other-gpg" --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
-gpg --homedir "$scratch/other-gpg" --batch --armor --export "$other_primary" >"$scratch/other.asc"
+other_primary="$(other_gpg --batch --with-colons --fingerprint --list-keys | awk -F: '$1=="fpr" {print $10;exit}')"
+other_gpg --batch --pinentry-mode loopback --passphrase '' --quick-add-key "$other_primary" ed25519 sign 1d >/dev/null 2>&1
+other_subkey="$(other_gpg --batch --with-colons --with-subkey-fingerprint --list-keys "$other_primary" | awk -F: '$1=="sub" {s=1;next} s && $1=="fpr" {print $10;exit}')"
+other_gpg --batch --armor --export "$other_primary" >"$scratch/other.asc"
 
 minisign -G -W -p "$scratch/good.pub" -s "$scratch/good.key" >/dev/null 2>&1 || fail 'minisign keygen failed'
 minisign -G -W -p "$scratch/env.pub" -s "$scratch/env.key" >/dev/null 2>&1 || fail 'env minisign keygen failed'
@@ -140,9 +142,9 @@ env_signed="$scratch/env-signed"
 write_manifests "$env_signed"
 minisign -S -s "$scratch/env.key" -m "$env_signed/SHA256SUMS" -x "$env_signed/SHA256SUMS.minisig" >/dev/null
 minisign -S -s "$scratch/env.key" -m "$env_signed/SHA512SUMS" -x "$env_signed/SHA512SUMS.minisig" >/dev/null
-gpg --homedir "$scratch/other-gpg" --batch --yes --armor --local-user "$other_subkey!" \
+other_gpg --batch --yes --armor --local-user "$other_subkey!" \
 	--detach-sign -o "$env_signed/SHA256SUMS.asc" "$env_signed/SHA256SUMS"
-gpg --homedir "$scratch/other-gpg" --batch --yes --armor --local-user "$other_subkey!" \
+other_gpg --batch --yes --armor --local-user "$other_subkey!" \
 	--detach-sign -o "$env_signed/SHA512SUMS.asc" "$env_signed/SHA512SUMS"
 if run_verify "$env_signed" >/dev/null 2>"$scratch/env-signed.err"; then
 	fail 'signatures from an env-supplied key must be refused'
@@ -162,8 +164,8 @@ if old not in text:
 mut = text.replace(old, new, 1)
 if old in mut:
     raise SystemExit('env minisign mutant still uses only the tagged pin')
-gpg_old = 'gpg --homedir "$work/gpg" --batch --status-fd 1 --verify'
-gpg_new = 'gpg --homedir "${SHELLSENTRY_GPG_HOMEDIR:-$work/gpg}" --batch --status-fd 1 --verify'
+gpg_old = 'env -u GNUPGHOME gpg --homedir "$work/gpg" --batch --status-fd 1 --verify'
+gpg_new = 'env -u GNUPGHOME gpg --homedir "${SHELLSENTRY_GPG_HOMEDIR:-$work/gpg}" --batch --status-fd 1 --verify'
 if gpg_old not in mut:
     raise SystemExit('live script does not verify PGP in the isolated home')
 mut = mut.replace(gpg_old, gpg_new, 1)
@@ -205,7 +207,7 @@ pass 'valid minisign with missing GPG signatures is refused'
 wrong_gpg="$scratch/wrong-gpg"
 write_manifests "$wrong_gpg"
 sign_committed "$wrong_gpg"
-gpg --homedir "$scratch/other-gpg" --batch --yes --armor --local-user "$other_subkey!" \
+other_gpg --batch --yes --armor --local-user "$other_subkey!" \
 	--detach-sign -o "$wrong_gpg/SHA256SUMS.asc" "$wrong_gpg/SHA256SUMS"
 if run_verify "$wrong_gpg" >/dev/null 2>"$scratch/wrong-gpg.err"; then
 	fail 'valid minisign with a wrong-signer GPG signature must be refused'
@@ -260,10 +262,10 @@ ms_new = '''	if [[ -f "$dir/$manifest.minisig" ]]; then
 if ms_old not in mut:
     raise SystemExit('live script is missing required minisign -V')
 mut = mut.replace(ms_old, ms_new, 1)
-pgp_old = '''	gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$dir/$manifest.asc" "$dir/$manifest" \\
+pgp_old = '''	env -u GNUPGHOME gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$dir/$manifest.asc" "$dir/$manifest" \\
 		>"$work/pgp-$manifest" 2>/dev/null || die "PGP signature for $manifest is invalid under the committed key"'''
 pgp_new = '''	if [[ -f "$dir/$manifest.asc" ]]; then
-	gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$dir/$manifest.asc" "$dir/$manifest" \\
+	env -u GNUPGHOME gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$dir/$manifest.asc" "$dir/$manifest" \\
 		>"$work/pgp-$manifest" 2>/dev/null || die "PGP signature for $manifest is invalid under the committed key"
 	else
 		return 0

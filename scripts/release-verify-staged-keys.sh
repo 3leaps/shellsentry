@@ -40,11 +40,11 @@ pin_gpg="$(awk '$1=="gpg" {print $2}' "$anchors")"
 pin_minisign="$(awk '$1=="minisign" {print $2}' "$anchors")"
 [[ "$pin_gpg" =~ ^[0-9A-F]{40}$ && "$pin_minisign" =~ ^[0-9a-f]{64}$ ]] || die 'committed pins are malformed'
 gpg_home="$(mktemp -d)"
-trap 'gpgconf --homedir "$gpg_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gpg_home"' EXIT
+trap 'env -u GNUPGHOME gpgconf --homedir "$gpg_home" --kill all >/dev/null 2>&1 || true; rm -rf "$gpg_home"' EXIT
 chmod 700 "$gpg_home"
-gpg --homedir "$gpg_home" --batch --quiet --import "$staged_gpg" 2>/dev/null ||
+env -u GNUPGHOME gpg --homedir "$gpg_home" --batch --quiet --import "$staged_gpg" 2>/dev/null ||
 	die 'staged PGP key failed to import'
-listing="$(gpg --homedir "$gpg_home" --batch --with-colons --with-subkey-fingerprint --list-keys)"
+listing="$(env -u GNUPGHOME gpg --homedir "$gpg_home" --batch --with-colons --with-subkey-fingerprint --list-keys)"
 [[ "$(awk -F: '$1=="pub" {n++} END {print n+0}' <<<"$listing")" == 1 ]] ||
 	die 'staged PGP key must hold exactly one primary'
 staged_fpr="$(awk -F: '$1=="fpr" {print $10; exit}' <<<"$listing")"

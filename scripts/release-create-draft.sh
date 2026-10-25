@@ -81,7 +81,7 @@ fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/shs-create-draft.XXXXXX")"
 cleanup() {
-	gpgconf --homedir "$work/gpg" --kill all >/dev/null 2>&1 || true
+	env -u GNUPGHOME gpgconf --homedir "$work/gpg" --kill all >/dev/null 2>&1 || true
 	rm -rf "$work"
 }
 trap cleanup EXIT
@@ -97,9 +97,9 @@ minisign_pin="$work/shellsentry-minisign.pub"
 git -C "$root" cat-file blob "$commit:docs/security/release-signing-keys.asc" >"$gpg_pin"
 git -C "$root" cat-file blob "$commit:docs/security/shellsentry-minisign.pub" >"$minisign_pin"
 [[ -s "$gpg_pin" && -s "$minisign_pin" ]] || die "committed signing keys missing from $tag"
-gpg --homedir "$work/gpg" --batch --quiet --import "$gpg_pin" 2>/dev/null ||
+env -u GNUPGHOME gpg --homedir "$work/gpg" --batch --quiet --import "$gpg_pin" 2>/dev/null ||
 	die 'committed PGP pin failed to import'
-listing="$(gpg --homedir "$work/gpg" --batch --with-colons --with-subkey-fingerprint --list-keys)"
+listing="$(env -u GNUPGHOME gpg --homedir "$work/gpg" --batch --with-colons --with-subkey-fingerprint --list-keys)"
 [[ "$(awk -F: '$1=="pub" {n++} END {print n+0}' <<<"$listing")" == 1 ]] ||
 	die 'committed PGP pin must hold exactly one primary'
 primary="$(awk -F: '$1=="fpr" {print $10; exit}' <<<"$listing")"
@@ -128,7 +128,7 @@ verify_minisign() {
 }
 verify_pgp() {
 	local manifest="$1"
-	gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$src/$manifest.asc" "$src/$manifest" \
+	env -u GNUPGHOME gpg --homedir "$work/gpg" --batch --status-fd 1 --verify "$src/$manifest.asc" "$src/$manifest" \
 		>"$work/pgp-$manifest" 2>/dev/null || die "PGP signature for $manifest is invalid under the committed key"
 	awk -v primary="$primary" -v permitted="$permitted" '
 	  $1=="[GNUPG:]" && $2=="VALIDSIG" {
