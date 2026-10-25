@@ -55,6 +55,7 @@ SFETCH_MINISIGN_PUBKEY := RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctS
 GONEAT_VERSION ?= v0.6.6
 GOVULNCHECK_VERSION ?= v1.6.0
 STATICCHECK_VERSION ?= v0.6.1
+GOSEC_VERSION ?= v2.29.0
 
 # Host binary extension: Windows installers write sfetch.exe / goneat.exe
 HOST_GOOS := $(shell go env GOHOSTOS 2>/dev/null || go env GOOS)
@@ -72,6 +73,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 
 .PHONY: all help build test clean install fmt fmt-check lint check-all version tools prereqs bootstrap bootstrap-force build-all assess
 .PHONY: schema-validate schema-meta sarif-validate precommit prepush govulncheck
+.PHONY: gosec gosec-high gosec-install test-gosec-pin
 .PHONY: release-download release-checksums release-verify-checksums release-sign
 .PHONY: release-notes release-upload release-export-key release-export-minisign-key release-export-keys
 .PHONY: release-verify-key release-verify-minisign-pubkey release-verify-keys release-verify-signatures release-verify
@@ -218,6 +220,29 @@ lint: ## Run linters (staticcheck pin: STATICCHECK_VERSION)
 	go vet ./...
 	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
 
+# gosec -version prints "dev" for go install builds (no release ldflags).
+# Assert the module version recorded in the binary instead.
+gosec-install: ## Install pinned gosec into bin/ and assert its version
+	@mkdir -p $(BIN_DIR)
+	GOBIN=$(BIN_DIR) go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
+	@modver="$$(go version -m "$(BIN_DIR)/gosec" 2>/dev/null | awk '$$1=="mod" && $$2=="github.com/securego/gosec/v2" {print $$3; exit}')"; \
+	if [ -z "$$modver" ] || [ "$$modver" != "$(GOSEC_VERSION)" ]; then \
+		echo "[!!] gosec version mismatch (have: $$modver; want: $(GOSEC_VERSION))" >&2; \
+		exit 1; \
+	fi; \
+	echo "[ok] gosec $(GOSEC_VERSION) in $(BIN_DIR)"
+
+gosec: ## Run gosec security scanner
+	gosec ./...
+
+gosec-high: ## Run gosec (high confidence only)
+	@export PATH="$(BIN_DIR):$$PATH"; \
+	if ! command -v gosec >/dev/null 2>&1; then \
+		echo "[!!] gosec not found on PATH; run 'make gosec-install' (pinned $(GOSEC_VERSION))" >&2; \
+		exit 1; \
+	fi; \
+	gosec -confidence high -exclude G301,G302,G107,G304 ./...
+
 test: ## Run tests
 	go test -v -race ./...
 
@@ -228,6 +253,8 @@ govulncheck: ## Run pinned govulncheck vulnerability scan
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 precommit: check-all schema-validate govulncheck ## Local pre-commit checks
+	$(MAKE) test-gosec-pin
+	$(MAKE) gosec-high
 	@echo "[ok] Pre-commit checks passed"
 
 prepush: precommit sarif-validate test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select assert-no-pipe-install-sfetch assert-sfetch-pin-coupling ## Local pre-push checks
@@ -324,6 +351,9 @@ test-bootstrap-pin-match: ## Regression: version-matches-pin current + stale cas
 
 test-install-anchor-select: ## Regression: installer pin-map anchor selection (unit + coherence)
 	@./scripts/test-install-anchor-select.sh
+
+test-gosec-pin: ## Regression: gosec pin and fail-closed missing-binary guard
+	@./scripts/test-gosec-pin.sh
 
 release-notes: ## Copy release notes into dist/release
 	@if [ -z "$(RELEASE_TAG)" ]; then echo "error: RELEASE_TAG not set" >&2; exit 1; fi

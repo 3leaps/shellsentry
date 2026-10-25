@@ -7,6 +7,12 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pinned gosec in CI.** `gosec` is pinned to v2.29.0 (`go install` into
+  `bin/`). `make gosec-high` fails closed if `gosec` is missing, instead of
+  exiting 127 when goneat cooling skips a newer `@latest` build.
+
 ## [0.1.7] - 2026-10-21
 
 ### Security
