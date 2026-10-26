@@ -85,6 +85,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-publish release-tag-tests require-release-tag
 .PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft test-release-create-draft
 .PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
+.PHONY: test-release-verify-published-tag test-release-ci-artifact-draft
 .PHONY: test-version-ldflags test-release-preflight test-release-guard-tag-version
 .PHONY: test-release-tag-operator test-release-prepare-tag-message test-release-tag-controls
 .PHONY: test-release-verify-remote-tag test-release-push-tag
@@ -369,9 +370,8 @@ release-verify-remote-tag: require-release-tag ## Compare local and remote tag o
 release-publish: require-release-tag ## Maintainer-only: byte-verify draft assets, then promote
 	@./scripts/release-publish.sh "$(SHELLSENTRY_RELEASE_TAG)" "$(DIST_RELEASE)"
 
-release-download: require-release-tag ## Download release assets for signing
-	@mkdir -p $(DIST_RELEASE)
-	./scripts/download-release-assets.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
+release-download: require-release-tag ## Fetch tag-workflow packages bound to run id, attempt, and digest
+	@./scripts/release-fetch-ci-artifacts.sh "$(SHELLSENTRY_RELEASE_TAG)" "$(DIST_RELEASE)"
 
 bootstrap-script: ## Copy install script into release directory
 	@mkdir -p $(DIST_RELEASE)
@@ -462,8 +462,14 @@ test-release-tag: ## Regression: signed tag stays local and refuses GitHub Actio
 test-release-tag-smartcard: ## Regression: tag signing uses operator GPG home (no secret export)
 	@./scripts/test-release-tag-smartcard.sh
 
-test-release-publish: ## Regression: publish promotes only a byte-verified draft
+test-release-publish: ## Regression: publish promotes only a pin-signed, byte-verified draft
 	@./scripts/test-release-publish.sh
+
+test-release-verify-published-tag: ## Regression: published-tag gate binds object, pin, and GitHub verification
+	@./scripts/release-verify-published-tag.test.sh
+
+test-release-ci-artifact-draft: ## Regression: CI-artifact fetch binds run/attempt/digest; draft stays local
+	@./scripts/release-ci-artifact-draft.test.sh
 
 test-verify-pinned-tag: ## Regression: signed tag verifies against the committed public pin
 	@./scripts/verify-pinned-tag.test.sh
@@ -502,6 +508,8 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-makefile-release-tag
 	@$(MAKE) test-upload-release-draft
 	@$(MAKE) test-release-create-draft
+	@$(MAKE) test-release-verify-published-tag
+	@$(MAKE) test-release-ci-artifact-draft
 	@$(MAKE) test-version-ldflags
 	@$(MAKE) test-release-preflight
 	@$(MAKE) test-release-guard-tag-version
@@ -588,8 +596,8 @@ release-create-draft: require-release-tag ## Open a draft GitHub release from lo
 release-upload: require-release-tag release-notes release-verify ## Upload assets (requires full verification chain)
 	./scripts/upload-release-assets.sh $(SHELLSENTRY_RELEASE_TAG) $(DIST_RELEASE)
 
-release-clean: ## Remove dist/release contents
-	rm -rf $(DIST_RELEASE)
+release-clean: ## Remove dist/release contents and the staging anchor
+	rm -rf $(DIST_RELEASE) $(DIST_RELEASE).anchor
 	@echo "Cleaned $(DIST_RELEASE)"
 
 SARIF_SCHEMA := schemas/third_party/sarif/sarif-schema-2.1.0.json

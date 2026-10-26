@@ -17,6 +17,12 @@ WRITE_ALL_RE = re.compile(r"^\s*permissions:\s*write-all\b", re.MULTILINE)
 CONTENTS_READ_RE = re.compile(
     r"^permissions:\s*\n\s+contents:\s*read\b", re.MULTILINE
 )
+SECRETS_RE = re.compile(r"secrets\.|secrets:\s*inherit")
+GH_API_WRITE_RE = re.compile(
+    r"gh\s+api\s+[^\n]*(?:--method|-X)\s+(?:POST|PATCH|PUT|DELETE)|"
+    r"gh\s+api\s+[^\n]*/releases",
+    re.IGNORECASE,
+)
 BANNED = (
     "action-gh-release",
     "gh release ",
@@ -36,12 +42,22 @@ def validate(text: str) -> tuple[bool, str]:
     for banned in BANNED:
         if banned in text:
             failures.append(f"release-creating construct present: {banned!r}")
+    if SECRETS_RE.search(text):
+        failures.append("tag workflow must not reference secrets.* or secrets: inherit")
+    if GH_API_WRITE_RE.search(text):
+        failures.append("tag workflow must not use gh api to write releases")
+    if re.search(r"persist-credentials:\s*true\b", text):
+        failures.append("tag workflow must not set persist-credentials: true")
     if "upload-artifact" not in text:
         failures.append("tag workflow must upload artifacts (no GitHub Release)")
+    if "release-packages-" not in text:
+        failures.append("tag workflow must upload a combined release-packages artifact")
     if re.search(r"runs-on:\s*ubuntu-latest\b", text):
         failures.append("tag workflow must not use ubuntu-latest")
     if not re.search(r"runs-on:\s*ubuntu-24\.04\b", text):
         failures.append("tag workflow must use ubuntu-24.04")
+    if not re.search(r"(?m)^  build:\n(?:.*\n)*?    needs: verify-anchors\b", text):
+        failures.append("build must need verify-anchors")
     install = text.find("ci-install-decernor.sh")
     verify = text.find("release-verify-committed-anchors.sh")
     if install < 0 or verify < 0:
@@ -80,6 +96,33 @@ def mutate_drop_anchor_verify(text: str) -> str:
     )
 
 
+def mutate_drop_needs(text: str) -> str:
+    mut = text.replace("    needs: verify-anchors\n", "", 1)
+    if "needs: verify-anchors" in mut:
+        raise SystemExit("mutant still has needs: verify-anchors")
+    return mut
+
+
+def mutate_secrets(text: str) -> str:
+    return text.replace(
+        "permissions:\n  contents: read\n",
+        "permissions:\n  contents: read\n  secrets: inherit\n",
+        1,
+    )
+
+
+def mutate_persist_credentials(text: str) -> str:
+    return text.replace("persist-credentials: false", "persist-credentials: true", 1)
+
+
+def mutate_gh_api_write(text: str) -> str:
+    return text + "\n      - run: gh api --method POST repos/3leaps/shellsentry/releases\n"
+
+
+def mutate_drop_combined_artifact(text: str) -> str:
+    return text.replace("release-packages-", "platform-packages-", 1)
+
+
 workflow = WORKFLOW.read_text(encoding="utf-8")
 valid, message = validate(workflow)
 if not valid:
@@ -91,6 +134,11 @@ for label, mutator in (
     ("contents write", mutate_contents_write),
     ("ubuntu-latest runner", mutate_floating_runner),
     ("anchor verify removed", mutate_drop_anchor_verify),
+    ("build needs verify-anchors dropped", mutate_drop_needs),
+    ("secrets inherit", mutate_secrets),
+    ("persist-credentials true", mutate_persist_credentials),
+    ("gh api release write", mutate_gh_api_write),
+    ("combined release-packages artifact removed", mutate_drop_combined_artifact),
 ):
     fixture = mutator(workflow)
     valid, _ = validate(fixture)

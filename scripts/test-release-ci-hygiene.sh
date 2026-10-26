@@ -27,10 +27,10 @@ pass "ceremony regex allows make release-tag-tests and still matches make releas
 if grep -nE "$CEREMONY_MAKE" "$WF_DIR"/*; then
     fail "workflows must not invoke maintainer signing or publish targets"
 fi
-if grep -nE 'scripts/(release-tag|release-push-tag|release-publish|sign-release-assets|upload-release-assets|release-create-draft)\.sh' "$WF_DIR"/*; then
+if grep -nE 'scripts/(release-tag|release-push-tag|release-publish|sign-release-assets|upload-release-assets|release-create-draft|release-fetch-ci-artifacts)\.sh' "$WF_DIR"/*; then
     fail "workflows must not invoke maintainer signing or publish scripts"
 fi
-pass "workflows do not invoke release-tag/publish/sign/upload/create-draft"
+pass "workflows do not invoke release-tag/publish/sign/upload/create-draft/fetch"
 
 if grep -nE 'SHELLSENTRY_(MINISIGN_KEY|PGP_KEY_ID|GPG_HOMEDIR)\s*:' "$WF_DIR"/*; then
     fail "workflows must not set signing-key environment"
@@ -55,7 +55,7 @@ else
 fi
 cp "$WF_DIR/ci.yml" "$scratch/ci-script.yml"
 printf '\n      - run: ./scripts/release-tag.sh\n' >>"$scratch/ci-script.yml"
-if grep -nE 'scripts/(release-tag|release-publish|sign-release-assets|upload-release-assets|release-create-draft)\.sh' "$scratch/ci-script.yml" >/dev/null; then
+if grep -nE 'scripts/(release-tag|release-publish|sign-release-assets|upload-release-assets|release-create-draft|release-fetch-ci-artifacts)\.sh' "$scratch/ci-script.yml" >/dev/null; then
     pass "hygiene grep catches scripts/release-tag.sh spliced into ci.yml"
 else
     fail "hygiene grep missed a spliced release-tag.sh"
@@ -114,6 +114,8 @@ for step in steps:
     break
 if run_body is None:
     raise SystemExit("macos Signed-tag tooling tests run block missing")
+if re.search(r"(?m)^(?:        )?continue-on-error:\s*true\b", step):
+    raise SystemExit("macos Signed-tag tooling tests must not set continue-on-error")
 cmd = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*make\s+release-tag-tests\s*$")
 openers = re.compile(r"^(if|while|until|for|case)\b")
 closers = re.compile(r"^(fi|done|esac)\b")
@@ -209,6 +211,27 @@ fi
 grep -q 'make release-tag-tests' "$scratch/macos-ortrue.err" ||
     fail "macos || true mutant refusal (log: $(cat "$scratch/macos-ortrue.err"))"
 pass "changing macos make release-tag-tests to || true fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-macos-continue.yml" <<'PY' || fail "macos continue-on-error mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+live = "      - name: Signed-tag tooling tests"
+mut_line = "      - name: Signed-tag tooling tests\n        continue-on-error: true"
+if live not in text:
+    raise SystemExit("live ci.yml missing macos Signed-tag tooling tests step")
+mut = text.replace(live, mut_line, 1)
+if "continue-on-error: true" not in mut:
+    raise SystemExit("mutant did not set continue-on-error")
+dest.write_text(mut)
+PY
+if parse_jobs "$scratch/ci-macos-continue.yml" >/dev/null 2>"$scratch/macos-continue.err"; then
+    fail "hygiene accepted ci.yml after setting continue-on-error on macos release-tag-tests"
+fi
+grep -q 'continue-on-error' "$scratch/macos-continue.err" ||
+    fail "macos continue-on-error mutant refusal (log: $(cat "$scratch/macos-continue.err"))"
+pass "setting continue-on-error on macos make release-tag-tests fails this check"
 
 python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-verify.yml" <<'PY' || fail "anchor-verify mutant was not distinguished"
 from pathlib import Path

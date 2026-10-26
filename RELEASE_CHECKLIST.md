@@ -62,10 +62,12 @@ Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
   - CI validates VERSION file matches tag
   - The `verify-anchors` job installs digest-pinned Decernor and checks the
     committed public anchors
-  - The `build` job (`contents: read`, `ubuntu-24.04`) builds unsigned
-    archives for the five-platform matrix and uploads them as artifacts
+  - The `build` job (`contents: read`, `ubuntu-24.04`, `needs: verify-anchors`)
+    builds unsigned archives for the five-platform matrix
+  - `collect-packages` uploads a single `release-packages-$TAG` artifact
   - CI never creates a GitHub Release and never requests `contents: write`
   - A green tag run is a consistency signal, not release authorization
+  - Record the successful Release workflow run id and attempt for staging
 
 ## 2. Stage packages, sign, then open the draft (local machine)
 
@@ -84,14 +86,18 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    make release-clean
    ```
 
-2. **Stage unsigned packages** into `dist/release/`
-
-   There is no GitHub Release yet. Copy the five archives from the tag
-   workflow artifacts, or build them locally:
+2. **Fetch the tag-workflow packages** bound to that run, attempt, and digest
 
    ```bash
-   make package-all
+   export RELEASE_RUN_ID=<run-id>
+   export RELEASE_RUN_ATTEMPT=<attempt>
+   make release-download
    ```
+
+   `release-download` verifies the published tag, downloads the combined
+   `release-packages-$TAG` artifact by id, and checks the zip digest.
+   Local `make package-all` is not a substitute: the signed bytes must be
+   the archives CI produced for that tagged commit.
 
    Expected names: `shellsentry_linux_amd64.tar.gz`,
    `shellsentry_linux_arm64.tar.gz`, `shellsentry_windows_amd64.zip`,
@@ -147,7 +153,8 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    the tagged commit, `vcs.modified` is false) plus delimited ldflag
    version strings, and reads release notes from the tagged commit
    (`git cat-file blob <commit>:docs/releases/<tag>.md`), not the
-   working tree.
+   working tree. Also refuses extra files and a tag that no longer
+   matches the staging anchor.
 
 8. **Export public keys**
 
@@ -190,15 +197,19 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
 
 ## 3. Publish (byte-verified)
 
-- [ ] Promote only after the draft matches local `SHA256SUMS` byte-for-byte:
+- [ ] Promote only after the draft is the locally verified set:
 
   ```bash
   make release-publish
   ```
 
-  `release-publish` refuses a non-draft release, re-downloads the draft,
-  `cmp`s `SHA256SUMS` and every listed file against the local tree, then
-  runs `gh release edit --draft=false`.
+  `release-publish` re-verifies the staged tag through the shared tag-anchor
+  (fetches `origin/main` first), requires an exact draft asset set, checks
+  both manifests and their minisign/PGP signatures against pins in the
+  tagged commit, binds each archive to the tagged commit and version,
+  re-downloads the draft, `cmp`s every asset, then runs
+  `gh release edit --draft=false`. It refuses GitHub Actions and a
+  non-draft release. Do not run `gh release edit --draft=false` by hand.
 
 - [ ] Verify release: `gh release view "$SHELLSENTRY_RELEASE_TAG"`
 - [ ] Test install script: download `install-shellsentry.sh`, verify it against

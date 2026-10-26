@@ -37,7 +37,8 @@ fixture="$scratch/repo"
 fixture_script="$fixture/scripts/release-verify-staged-keys.sh"
 mkdir -p "$fixture/scripts" "$fixture/keys" "$fixture/docs/security"
 cp "$root/scripts/release-decernor.sh" "$root/scripts/verify-public-key.sh" \
-	"$root/scripts/release-verify-staged-keys.sh" "$fixture/scripts/"
+	"$root/scripts/release-verify-staged-keys.sh" "$root/scripts/release-verify-tag-anchor.sh" \
+	"$fixture/scripts/"
 cp "$root/keys/expected-fingerprints.txt" "$root/keys/expected-fingerprints.ndjson" "$fixture/keys/"
 cp "$root/docs/security/release-signing-keys.asc" "$root/docs/security/shellsentry-minisign.pub" \
 	"$fixture/docs/security/"
@@ -48,11 +49,40 @@ git -C "$fixture" config commit.gpgsign false
 git -C "$fixture" add docs keys scripts
 git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
 git -C "$fixture" tag -am 'v1.2.3' v1.2.3
+git init -q --bare "$scratch/origin.git"
+git -C "$fixture" remote add origin "$scratch/origin.git"
+git -C "$fixture" push -q origin HEAD:main
+git -C "$fixture" push -q origin v1.2.3
+git -C "$fixture" fetch -q origin
 restore_script() {
 	cp "$root/scripts/release-verify-staged-keys.sh" "$fixture_script"
 	chmod +x "$fixture_script"
 }
 chmod +x "$fixture/scripts/"*.sh
+mkdir -p "$scratch/bin-path"
+tag_object="$(git -C "$fixture" rev-parse refs/tags/v1.2.3)"
+full="$(git -C "$fixture" rev-parse HEAD)"
+export GH_TAG_OBJECT="$tag_object"
+export GH_TAG_JSON="$scratch/tag.json"
+cat >"$GH_TAG_JSON" <<JSON
+{"tag":"v1.2.3","object":{"type":"commit","sha":"$full"},"verification":{"verified":true,"reason":"valid"}}
+JSON
+cat >"$scratch/bin-path/gh" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *git/ref/tags/*)
+    printf '{"object":{"type":"tag","sha":"%s"}}\n' "${GH_TAG_OBJECT:?}"
+    ;;
+  *'/git/tags/'*)
+    cat "${GH_TAG_JSON:?}"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod +x "$scratch/bin-path/gh"
+export PATH="$scratch/bin-path:$PATH"
 
 command -v gpg >/dev/null 2>&1 || fail 'gpg required'
 command -v minisign >/dev/null 2>&1 || fail 'minisign required'
@@ -71,6 +101,8 @@ grep -E '^release-tag-tests:' -A40 "$root/Makefile" | grep -q 'test-release-veri
 	fail 'release-tag-tests must run test-release-verify-staged-keys'
 grep -q 'cat-file blob "$commit:keys/expected-fingerprints.txt"' "$script" ||
 	fail 'release-verify-staged-keys.sh must read anchors from the tagged commit'
+grep -q 'release-verify-tag-anchor.sh' "$script" ||
+	fail 'release-verify-staged-keys.sh must call the tag-anchor helper'
 grep -E '^release-verify-keys:' -A8 "$root/Makefile" | grep -q 'SHELLSENTRY_RELEASE_TAG' ||
 	fail 'release-verify-keys must pass the tag to release-verify-staged-keys.sh'
 pass 'Makefile requires both staged keys and runs the invertibility harness'

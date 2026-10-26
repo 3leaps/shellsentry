@@ -28,6 +28,7 @@ staged_minisign="$dir/shellsentry-minisign.pub"
 	die "missing staged minisign key: $staged_minisign"
 resolve_release_decernor || die 'trusted Decernor identity/version check failed'
 "$root/scripts/verify-public-key.sh" "$staged_gpg" >/dev/null
+"$root/scripts/release-verify-tag-anchor.sh" "$tag"
 commit="$(git -C "$root" rev-parse --verify --quiet "${tag}^{commit}")" ||
 	die "cannot peel tagged commit $tag"
 work="$(mktemp -d /tmp/shs-sk.XXXXXX)"

@@ -63,6 +63,11 @@ for target in release-preflight release-guard-tag-version release-prepare-tag-me
 done
 grep -E '^release-create-draft: require-release-tag' -A2 Makefile | grep -q 'release-create-draft.sh' ||
 	fail "release-create-draft must invoke scripts/release-create-draft.sh"
+grep -E '^release-download: require-release-tag' -A2 Makefile | grep -q 'release-fetch-ci-artifacts.sh' ||
+	fail "release-download must invoke scripts/release-fetch-ci-artifacts.sh"
+if grep -E '^release-download:' -A4 Makefile | grep -q 'download-release-assets.sh'; then
+	fail "release-download must not call download-release-assets.sh"
+fi
 grep -E '^release-tag: require-release-tag' -A2 Makefile | grep -q 'release-tag-operator.sh local-tag' ||
 	fail "release-tag must invoke scripts/release-tag-operator.sh local-tag"
 grep -E '^release-push-tag: require-release-tag' -A2 Makefile | grep -q 'release-tag-operator.sh remote-push' ||
@@ -215,6 +220,33 @@ grep -q 'SHELLSENTRY_DECERNOR_BIN is required' "$scratch/vk-dec.out" ||
 	fail "release-verify-keys Decernor refusal (log: $(cat "$scratch/vk-dec.out"))"
 pass "make release-verify-keys fails closed without SHELLSENTRY_DECERNOR_BIN"
 
+scratch_dl="$scratch/dl"
+mkdir -p "$scratch_dl/scripts"
+cp "$ROOT/VERSION" "$scratch_dl/VERSION"
+stub_log="$scratch_dl/called.log"
+cat >"$scratch_dl/scripts/release-fetch-ci-artifacts.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >"${STUB_LOG:?}"
+mkdir -p "$2"
+touch "$2/.fetched"
+SH
+chmod +x "$scratch_dl/scripts/release-fetch-ci-artifacts.sh"
+if ! STUB_LOG="$stub_log" make -C "$scratch_dl" -f "$ROOT/Makefile" release-download \
+	"SHELLSENTRY_RELEASE_TAG=v${file_version}" \
+	>"$scratch_dl/make-dl.out" 2>"$scratch_dl/make-dl.err"; then
+	fail "make release-download with stub fetch failed: $(cat "$scratch_dl/make-dl.err")"
+fi
+[ -s "$stub_log" ] || fail "release-download must invoke release-fetch-ci-artifacts.sh (make -n is not enough)"
+grep -q "v${file_version}" "$stub_log" ||
+	fail "stub fetch must receive the release tag (got: $(cat "$stub_log"))"
+grep -q 'dist/release' "$stub_log" ||
+	fail "stub fetch must receive dist/release (got: $(cat "$stub_log"))"
+if grep -q 'download-release-assets.sh' "$scratch_dl/make-dl.out" "$scratch_dl/make-dl.err" "$stub_log"; then
+	fail "release-download still calls download-release-assets.sh"
+fi
+pass "release-download invokes CI-artifact fetch"
+
 python3 - "$ROOT/Makefile" <<'PY' || fail "release-tag-tests must stay macOS-safe (no linux_amd64 Decernor download)"
 from pathlib import Path
 import re, sys
@@ -233,6 +265,10 @@ if 'test-release-verify-tag-anchor' not in body:
     raise SystemExit('release-tag-tests must run test-release-verify-tag-anchor')
 if 'test-release-create-draft' not in body:
     raise SystemExit('release-tag-tests must run test-release-create-draft')
+if 'test-release-publish' not in body or 'test-release-verify-published-tag' not in body:
+    raise SystemExit('release-tag-tests must run the publish and published-tag gates')
+if 'test-release-ci-artifact-draft' not in body:
+    raise SystemExit('release-tag-tests must run test-release-ci-artifact-draft')
 if 'ci-install-decernor' in body or 'test-release-verify-committed-anchors' in body:
     raise SystemExit('release-tag-tests must not download linux_amd64 Decernor')
 mut = body.replace('test-release-decernor', 'test-ci-install-decernor', 1)
