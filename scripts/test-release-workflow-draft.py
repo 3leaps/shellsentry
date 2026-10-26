@@ -15,7 +15,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from workflow_native_guards import FLOATING_LABEL_RE, validate_release_guards  # noqa: E402
+from workflow_native_guards import (  # noqa: E402
+    FLOATING_LABEL_RE,
+    validate_release_guards,
+    validate_windows_zip_script,
+)
 WRITE_PERM_RE = re.compile(r"^\s*([a-z-]+):\s*write\b", re.MULTILINE)
 WRITE_ALL_RE = re.compile(r"^\s*permissions:\s*write-all\b", re.MULTILINE)
 CONTENTS_READ_RE = re.compile(
@@ -83,8 +87,8 @@ def validate(text: str) -> tuple[bool, str]:
         failures.append("build must require the runner host to match the matrix cell")
     if re.search(r"apt-get install[^\n]*\bzip\b", text):
         failures.append("tag build must not apt-get zip")
-    if "zipfile" not in text:
-        failures.append("windows archives must be packed with python zipfile")
+    if "package-windows-zip.sh" not in text:
+        failures.append("windows archives must be packed by scripts/package-windows-zip.sh")
     if not re.search(r"(?m)^  build:\n(?:.*\n)*?    needs: verify-anchors\b", text):
         failures.append("build must need verify-anchors")
     install = text.find("ci-install-decernor.sh")
@@ -243,19 +247,93 @@ def mutate_drop_setup_python(text: str) -> str:
     return mut
 
 
-def mutate_drop_windowsapps_refusal(text: str) -> str:
-    old = (
-        '            case "$py" in\n'
-        '              *WindowsApps*) echo "error: Windows Store python stub at $py" >&2; exit 1 ;;\n'
-        "            esac\n"
-        '            test -s "$py"\n'
-    )
-    new = '            test -s "$py"\n'
+def mutate_drop_windows_zip_script(text: str) -> str:
+    old = './scripts/package-windows-zip.sh "${{ matrix.goos }}" "${{ matrix.goarch }}"'
+    new = 'python -c "pass"'
     if old not in text:
-        raise SystemExit("live workflow is missing the WindowsApps refusal")
+        raise SystemExit("live workflow is missing package-windows-zip.sh")
     mut = text.replace(old, new, 1)
-    if "WindowsApps" in mut:
-        raise SystemExit("WindowsApps mutant still refuses the Store stub")
+    if "package-windows-zip.sh" in mut:
+        raise SystemExit("zip-script mutant still calls package-windows-zip.sh")
+    return mut
+
+
+def mutate_license_swap(text: str) -> str:
+    license_block = (
+        "      - name: License check\n"
+        "        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'\n"
+        "        # Pin go-licenses; do not use @latest on the release path.\n"
+        "        run: |\n"
+        "          go install github.com/google/go-licenses@v1.5.0\n"
+        "          REPORT=$(go-licenses csv ./...)\n"
+        '          echo "$REPORT"\n'
+        '          if echo "$REPORT" | grep -E "(GPL|AGPL)" >/dev/null 2>&1; then\n'
+        '            echo "GPL/AGPL detected—blocked"\n'
+        "            exit 1\n"
+        "          fi\n\n"
+    )
+    if license_block not in text:
+        raise SystemExit("live workflow is missing the license step")
+    mut = text.replace(license_block, "", 1)
+    old = "      - name: Build\n        run: make build\n"
+    new = (
+        "      - name: License check\n"
+        "        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'\n"
+        "        run: make build\n"
+    )
+    if old not in mut:
+        raise SystemExit("license-swap mutant could not retarget Build")
+    mut = mut.replace(old, new, 1)
+    if mut.count("name: License check") != 1:
+        raise SystemExit("license-swap mutant must keep exactly one License check name")
+    return mut
+
+
+def mutate_license_append(text: str) -> str:
+    old = (
+        '            echo "GPL/AGPL detected—blocked"\n'
+        "            exit 1\n"
+        "          fi\n"
+    )
+    new = old + "          true\n"
+    if old not in text:
+        raise SystemExit("live workflow is missing the license run tail")
+    mut = text.replace(old, new, 1)
+    if mut.count("          true\n") < 1:
+        raise SystemExit("license-append mutant did not append a command")
+    return mut
+
+
+def mutate_host_exit_zero(text: str) -> str:
+    old = '          test "$host" = "$want"'
+    new = '          test "$host" = "$want"\n          exit 0'
+    if old not in text:
+        raise SystemExit("live workflow is missing the host equality test")
+    mut = text.replace(old, new, 1)
+    if "exit 0" not in mut:
+        raise SystemExit("host exit 0 mutant did not append exit 0")
+    return mut
+
+
+def mutate_host_custom_shell(text: str) -> str:
+    old = "      - name: Assert native host\n        run: |"
+    new = "      - name: Assert native host\n        shell: bash {0}\n        run: |"
+    if old not in text:
+        raise SystemExit("live workflow is missing Assert native host")
+    mut = text.replace(old, new, 1)
+    if "shell: bash {0}" not in mut:
+        raise SystemExit("host shell mutant did not set a custom shell:")
+    return mut
+
+
+def mutate_build_or_colon(text: str) -> str:
+    old = "        run: make build\n"
+    new = "        run: make build || :\n"
+    if old not in text:
+        raise SystemExit("live workflow is missing run: make build")
+    mut = text.replace(old, new, 1)
+    if "make build || :" not in mut:
+        raise SystemExit("|| : mutant did not append || :")
     return mut
 
 
@@ -284,10 +362,29 @@ for label, mutator in (
     ("Build continue-on-error", mutate_build_continue_on_error),
     ("license if: false", mutate_license_if_false),
     ("setup-python pin dropped", mutate_drop_setup_python),
-    ("WindowsApps refusal dropped", mutate_drop_windowsapps_refusal),
+    ("package-windows-zip.sh dropped", mutate_drop_windows_zip_script),
+    ("license step swapped onto Build", mutate_license_swap),
+    ("license run command appended", mutate_license_append),
+    ("host-check exit 0", mutate_host_exit_zero),
+    ("host-check custom shell:", mutate_host_custom_shell),
+    ("Build || :", mutate_build_or_colon),
 ):
     fixture = mutator(workflow)
     valid, _ = validate(fixture)
     if valid:
         raise SystemExit(f"FAIL: validator accepted fixture with {label}")
     print(f"PASS: validator rejects {label}")
+
+zip_script = (ROOT / "scripts" / "package-windows-zip.sh").read_text(encoding="utf-8")
+zip_fails = validate_windows_zip_script(zip_script)
+if zip_fails:
+    raise SystemExit(f"FAIL: live package-windows-zip.sh rejected: {'; '.join(zip_fails)}")
+print("PASS: package-windows-zip.sh packs with zipfile and refuses the Store stub")
+gutted = zip_script.replace("WindowsApps", "System32")
+if not validate_windows_zip_script(gutted):
+    raise SystemExit("FAIL: validator accepted package-windows-zip.sh without WindowsApps")
+print("PASS: validator rejects package-windows-zip.sh without the Store stub refusal")
+no_zipfile = zip_script.replace("zipfile", "tarfile")
+if not validate_windows_zip_script(no_zipfile):
+    raise SystemExit("FAIL: validator accepted package-windows-zip.sh without zipfile")
+print("PASS: validator rejects package-windows-zip.sh without zipfile")

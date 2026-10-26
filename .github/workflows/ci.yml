@@ -9,6 +9,10 @@ name: CI
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
   GITHUB_TOKEN: ${{ github.token }}
   GH_TOKEN: ${{ github.token }}
@@ -251,7 +255,6 @@ jobs:
           go-version: '1.26.10'
 
       - name: Assert native host
-        shell: bash
         run: |
           set -euo pipefail
           test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "windows/amd64"
@@ -312,22 +315,7 @@ jobs:
           python-version: '3.12'
 
       - name: Package Windows zip
-        shell: bash
-        run: |
-          set -euo pipefail
-          py="$(command -v python)"
-          case "$py" in
-            *WindowsApps*) echo "error: Windows Store python stub at $py" >&2; exit 1 ;;
-          esac
-          test -s "$py"
-          ASSET="shellsentry_$(go env GOOS)_$(go env GOARCH)"
-          ARCHIVE="${ASSET}.zip"
-          test -s "bin/${ASSET}.exe"
-          (cd bin && mv "${ASSET}.exe" "shellsentry.exe")
-          "$py" -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); z.write("bin/shellsentry.exe","shellsentry.exe")' "${ARCHIVE}"
-          (cd bin && mv "shellsentry.exe" "${ASSET}.exe")
-          test -s "${ARCHIVE}"
-          echo "packed ${ARCHIVE}"
+        run: ./scripts/package-windows-zip.sh
 
   windows-dogfood-arm64:
     name: Windows dogfood (arm64)
@@ -340,7 +328,6 @@ jobs:
           go-version: '1.26.10'
 
       - name: Assert native host
-        shell: bash
         run: |
           set -euo pipefail
           test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "windows/arm64"
@@ -412,19 +399,4 @@ jobs:
           python-version: '3.12'
 
       - name: Package Windows zip
-        shell: bash
-        run: |
-          set -euo pipefail
-          py="$(command -v python)"
-          case "$py" in
-            *WindowsApps*) echo "error: Windows Store python stub at $py" >&2; exit 1 ;;
-          esac
-          test -s "$py"
-          ASSET="shellsentry_$(go env GOOS)_$(go env GOARCH)"
-          ARCHIVE="${ASSET}.zip"
-          test -s "bin/${ASSET}.exe"
-          (cd bin && mv "${ASSET}.exe" "shellsentry.exe")
-          "$py" -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); z.write("bin/shellsentry.exe","shellsentry.exe")' "${ARCHIVE}"
-          (cd bin && mv "shellsentry.exe" "${ASSET}.exe")
-          test -s "${ARCHIVE}"
-          echo "packed ${ARCHIVE}"
+        run: ./scripts/package-windows-zip.sh
