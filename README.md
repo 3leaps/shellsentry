@@ -135,6 +135,9 @@ minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ct
 # PGP instead of minisign:
 # curl -sSfLO "$BASE/SHA256SUMS.asc"
 # curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"
+# gpg --show-keys --with-fingerprint shellsentry-release-signing-key.asc
+# fpr=$(gpg --show-keys --with-colons shellsentry-release-signing-key.asc | awk -F: '$1=="fpr" {print $10; exit}')
+# [ "$fpr" = 0CACA49B3119B6BC12B2CA11B9B485F294B9FE07 ] || { echo 'error: PGP key is not the pinned primary' >&2; exit 1; }
 # gpg --import shellsentry-release-signing-key.asc
 # signing subkey DAB70DD758911B26BB45A08C3B75AC591449DEBE
 # gpg --verify SHA256SUMS.asc SHA256SUMS

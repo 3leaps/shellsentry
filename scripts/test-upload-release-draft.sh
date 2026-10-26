@@ -20,6 +20,8 @@ if grep -nE -- '--draft=false|draft=false' "$UPLOAD"; then
 fi
 grep -q 'isDraft' "$UPLOAD" || fail "upload-release-assets.sh must assert the release stays a draft"
 grep -q 'draft=true' "$UPLOAD" || fail "upload-release-assets.sh must pass --draft=true on edit"
+grep -q 'gh release upload "$TAG" "$NOTES_FILE" --clobber' "$UPLOAD" ||
+    fail "upload-release-assets.sh must upload release-notes-<tag>.md as a draft asset"
 pass "upload script never publishes"
 
 # Mutant: restoring --draft=false must be caught.
@@ -86,5 +88,61 @@ if grep -q -- '--draft=false' "$GH_TRACE"; then
     fail "upload must not pass --draft=false"
 fi
 pass "normal upload preserves draft state"
+[[ -f "$WORK/assets/release-notes-v0.0.0.md" ]] ||
+    fail "upload must put release-notes-<tag>.md on the draft"
+pass "upload attaches the notes file as a draft asset"
+
+python3 - "$ROOT/RELEASE_CHECKLIST.md" <<'PY' || fail "RELEASE_CHECKLIST ceremony order does not match"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+steps = [
+    "make release-create-draft",
+    "make release-notes",
+    "make release-upload",
+    "make release-publish",
+]
+idx = []
+for s in steps:
+    i = text.find(s)
+    if i < 0:
+        raise SystemExit(f"missing {s}")
+    idx.append(i)
+if idx != sorted(idx):
+    raise SystemExit(f"ceremony order is {steps} but appeared at {idx}")
+up = text[idx[2]:idx[3]]
+if "release-notes-" not in up:
+    raise SystemExit("release-upload section must name the notes asset")
+PY
+pass "RELEASE_CHECKLIST ceremony order is create-draft, notes, upload, publish"
+
+python3 - "$UPLOAD" "$mut" <<'PY' || fail "notes-asset mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = '''echo "[upload] Release notes asset"
+gh release upload "$TAG" "$NOTES_FILE" --clobber
+'''
+if old not in text:
+    raise SystemExit("live upload is missing the notes-asset upload")
+mut = text.replace(old, "", 1)
+if "gh release upload \"$TAG\" \"$NOTES_FILE\" --clobber" in mut:
+    raise SystemExit("notes-asset mutant still uploads NOTES_FILE")
+dest.write_text(mut)
+PY
+mkdir -p "$WORK/mut-root/scripts"
+cp "$mut" "$WORK/mut-root/scripts/upload-release-assets.sh"
+cp "$ROOT/scripts/release-ci-refuse.sh" "$WORK/mut-root/scripts/"
+chmod +x "$WORK/mut-root/scripts/upload-release-assets.sh"
+rm -rf "$WORK/assets"
+mkdir -p "$WORK/assets"
+: >"$GH_TRACE"
+FIXTURE_DRAFT=true FIXTURE_ASSET_DIR="$WORK/assets" \
+    "$WORK/mut-root/scripts/upload-release-assets.sh" v0.0.0 "$WORK/dist" >/dev/null
+if [[ -f "$WORK/assets/release-notes-v0.0.0.md" ]]; then
+    fail "accepted upload after dropping the notes-asset upload"
+fi
+pass "notes-asset upload mutant is distinguished"
 
 echo "[ok] release-upload stays draft"

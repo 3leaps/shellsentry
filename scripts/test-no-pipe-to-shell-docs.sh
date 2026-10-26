@@ -209,24 +209,30 @@ pass "install blocks chain signature, checksum, and run"
 [[ ! -e configs/keys/shellsentry-minisign.pub ]] ||
     fail "configs/keys/shellsentry-minisign.pub must not exist; embed docs/security/shellsentry-minisign.pub"
 pass "duplicate configs/keys pins are absent"
-pgp_fetch_ok() {
+PINNED_PGP_PRIMARY='0CACA49B3119B6BC12B2CA11B9B485F294B9FE07'
+pgp_recipe_ok() {
     local file="$1"
     grep -q 'curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"' "$file" &&
+        grep -q 'gpg --show-keys --with-fingerprint shellsentry-release-signing-key.asc' "$file" &&
+        grep -q 'gpg --show-keys --with-colons shellsentry-release-signing-key.asc' "$file" &&
+        grep -q "$PINNED_PGP_PRIMARY" "$file" &&
+        grep -q "error: PGP key is not the pinned primary" "$file" &&
         grep -q 'gpg --import shellsentry-release-signing-key.asc' "$file" &&
         ! grep -q 'gpg --import docs/security/' "$file" &&
         ! grep -q 'gpg --import configs/keys/' "$file"
 }
-pgp_fetch_ok README.md || fail "README PGP step must fetch shellsentry-release-signing-key.asc from the release"
-pgp_fetch_ok docs/releases/v0.1.8.md ||
-    fail "v0.1.8 notes PGP step must fetch shellsentry-release-signing-key.asc from the release"
+pgp_recipe_ok README.md || fail "README PGP step must fetch and pin-check the release key"
+pgp_recipe_ok docs/releases/v0.1.8.md ||
+    fail "v0.1.8 notes PGP step must fetch and pin-check the release key"
 if grep -n 'gpg --import configs/keys/' README.md docs/releases/v0.1.8.md; then
     fail "current install docs must not import the GPG pin from configs/keys"
 fi
 # v0.1.8 section of RELEASE_NOTES (before ## v0.1.7) must match the fetch recipe.
-python3 - "$ROOT/RELEASE_NOTES.md" <<'PY' || fail "RELEASE_NOTES v0.1.8 PGP step must fetch the release key asset"
+python3 - "$ROOT/RELEASE_NOTES.md" "$PINNED_PGP_PRIMARY" <<'PY' || fail "RELEASE_NOTES v0.1.8 PGP step must fetch and pin-check the release key"
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
+pin = sys.argv[2]
 start = text.find("## v0.1.8")
 end = text.find("## v0.1.7")
 if start < 0 or end < 0 or end <= start:
@@ -234,12 +240,20 @@ if start < 0 or end < 0 or end <= start:
 sec = text[start:end]
 if 'curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"' not in sec:
     raise SystemExit("v0.1.8 section does not fetch the release key asset")
+if "gpg --show-keys --with-fingerprint shellsentry-release-signing-key.asc" not in sec:
+    raise SystemExit("v0.1.8 section does not show the fetched key fingerprint")
+if "gpg --show-keys --with-colons shellsentry-release-signing-key.asc" not in sec:
+    raise SystemExit("v0.1.8 section does not read the colon fingerprint")
+if pin not in sec:
+    raise SystemExit("v0.1.8 section does not pin the primary fingerprint")
+if "error: PGP key is not the pinned primary" not in sec:
+    raise SystemExit("v0.1.8 section does not refuse a fingerprint mismatch")
 if "gpg --import shellsentry-release-signing-key.asc" not in sec:
     raise SystemExit("v0.1.8 section does not import the fetched key")
 if "gpg --import docs/security/" in sec or "gpg --import configs/keys/" in sec:
     raise SystemExit("v0.1.8 section still imports a checkout path")
 PY
-pass "current PGP install steps fetch the release key asset"
+pass "current PGP install steps fetch the release key and pin the primary"
 
 python3 - "$ROOT/docs/releases/v0.1.8.md" "$scratch/checkout-import.md" <<'PY' || fail "checkout-import mutant was not distinguished"
 from pathlib import Path
@@ -247,18 +261,45 @@ import sys
 src, dest = Path(sys.argv[1]), Path(sys.argv[2])
 text = src.read_text()
 old = '''# curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"
+# gpg --show-keys --with-fingerprint shellsentry-release-signing-key.asc
+# fpr=$(gpg --show-keys --with-colons shellsentry-release-signing-key.asc | awk -F: '$1=="fpr" {print $10; exit}')
+# [ "$fpr" = 0CACA49B3119B6BC12B2CA11B9B485F294B9FE07 ] || { echo 'error: PGP key is not the pinned primary' >&2; exit 1; }
 # gpg --import shellsentry-release-signing-key.asc'''
 new = "# gpg --import docs/security/release-signing-keys.asc"
 if old not in text:
-    raise SystemExit("live v0.1.8 notes are missing the release-asset PGP fetch")
+    raise SystemExit("live v0.1.8 notes are missing the pinned PGP fetch")
 mut = text.replace(old, new, 1)
 if "gpg --import docs/security/" not in mut:
     raise SystemExit("mutant did not restore a checkout import")
 dest.write_text(mut)
 PY
-if pgp_fetch_ok "$scratch/checkout-import.md"; then
+if pgp_recipe_ok "$scratch/checkout-import.md"; then
     fail "accepted v0.1.8 notes after restoring a checkout PGP import"
 fi
 pass "checkout PGP import mutant is distinguished"
+
+python3 - "$ROOT/docs/releases/v0.1.8.md" "$scratch/tofu-import.md" <<'PY' || fail "trust-on-first-use PGP mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = '''# gpg --show-keys --with-fingerprint shellsentry-release-signing-key.asc
+# fpr=$(gpg --show-keys --with-colons shellsentry-release-signing-key.asc | awk -F: '$1=="fpr" {print $10; exit}')
+# [ "$fpr" = 0CACA49B3119B6BC12B2CA11B9B485F294B9FE07 ] || { echo 'error: PGP key is not the pinned primary' >&2; exit 1; }
+# gpg --import shellsentry-release-signing-key.asc'''
+new = "# gpg --import shellsentry-release-signing-key.asc"
+if old not in text:
+    raise SystemExit("live v0.1.8 notes are missing the fingerprint pin check")
+mut = text.replace(old, new, 1)
+if "error: PGP key is not the pinned primary" in mut:
+    raise SystemExit("mutant still refuses a fingerprint mismatch")
+if "gpg --show-keys --with-fingerprint" in mut:
+    raise SystemExit("mutant still shows the fingerprint")
+dest.write_text(mut)
+PY
+if pgp_recipe_ok "$scratch/tofu-import.md"; then
+    fail "accepted v0.1.8 notes after dropping the fingerprint pin check"
+fi
+pass "trust-on-first-use PGP import mutant is distinguished"
 
 echo "[ok] no pipe-to-shell install docs"

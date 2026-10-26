@@ -92,6 +92,29 @@ grep -Fq "$STRIP" "$script" ||
 	fail 'create-draft must strip a leading "# " from the notes title'
 grep -Fq "$STRIP" "$root/scripts/release-publish.sh" ||
 	fail 'publish must strip a leading "# " identically'
+python3 - "$script" "$root/scripts/release-publish.sh" <<'PY' || fail '## x and #x titles must stay unchanged in both scripts'
+from pathlib import Path
+import sys
+
+needle = 'title = line[2:] if line.startswith("# ") else line'
+assign = 'line = notes.splitlines()[0] if notes.strip() else ""\n' + needle
+
+def title_from(path, notes):
+    text = Path(path).read_text()
+    if needle not in text:
+        raise SystemExit(f'{path} is missing the heading strip')
+    ns = {"notes": notes}
+    exec(assign, ns)
+    return ns["title"]
+
+for script in sys.argv[1:]:
+    if title_from(script, "## x\n") != "## x":
+        raise SystemExit(f'{script} must leave "## x" unchanged')
+    if title_from(script, "#x\n") != "#x":
+        raise SystemExit(f'{script} must leave "#x" unchanged')
+    if title_from(script, "# hello\n") != "hello":
+        raise SystemExit(f'{script} must strip a leading "# "')
+PY
 grep -q 'release-verify-tag-anchor.sh' "$script" || fail 'release-create-draft.sh must verify the tag against origin'
 grep -q 'cat-file blob "$commit:docs/releases/' "$script" ||
 	fail 'release-create-draft.sh must read release notes from the tagged commit'

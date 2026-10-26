@@ -90,6 +90,29 @@ grep -Fq "$STRIP" "$script" ||
 	fail 'publish must strip a leading "# " from the notes title'
 grep -Fq "$STRIP" "$root/scripts/release-create-draft.sh" ||
 	fail 'create-draft must strip a leading "# " identically'
+python3 - "$script" "$root/scripts/release-create-draft.sh" <<'PY' || fail '## x and #x titles must stay unchanged in both scripts'
+from pathlib import Path
+import sys
+
+needle = 'title = line[2:] if line.startswith("# ") else line'
+assign = 'line = notes.splitlines()[0] if notes.strip() else ""\n' + needle
+
+def title_from(path, notes):
+    text = Path(path).read_text()
+    if needle not in text:
+        raise SystemExit(f'{path} is missing the heading strip')
+    ns = {"notes": notes}
+    exec(assign, ns)
+    return ns["title"]
+
+for script in sys.argv[1:]:
+    if title_from(script, "## x\n") != "## x":
+        raise SystemExit(f'{script} must leave "## x" unchanged')
+    if title_from(script, "#x\n") != "#x":
+        raise SystemExit(f'{script} must leave "#x" unchanged')
+    if title_from(script, "# hello\n") != "hello":
+        raise SystemExit(f'{script} must strip a leading "# "')
+PY
 grep -q 'missing local release file' "$script" ||
 	fail 'publish must require local release files as regular files'
 grep -q 'tagged commit differs from the staged anchor' "$script" ||
@@ -162,7 +185,8 @@ mkdir -p "$repo/docs/security" "$repo/docs/releases" "$repo/scripts" "$repo/keys
 cp "$script" "$root/scripts/release-ci-refuse.sh" "$root/scripts/release-verify-tag-anchor.sh" \
 	"$root/scripts/release-bind-archives.sh" "$root/scripts/verify-signatures.sh" \
 	"$root/scripts/release-verify-published-tag.sh" "$root/scripts/verify-pinned-tag.sh" \
-	"$root/scripts/release-decernor.sh" "$repo/scripts/"
+	"$root/scripts/release-decernor.sh" "$root/scripts/release-create-draft.sh" \
+	"$root/scripts/upload-release-assets.sh" "$repo/scripts/"
 chmod +x "$repo/scripts/"*.sh
 cp "$root/config/release/tagger-identity.txt" "$repo/config/release/"
 cp -a "$root/internal" "$repo/"
@@ -380,6 +404,13 @@ case "$1 $2" in
 	exit 1
 	;;
 "release view")
+	if [[ "${FIXTURE_RELEASE_EXISTS:-1}" != 1 ]]; then
+		[[ -n "${FIXTURE_GH_EXISTS:-}" && -f "$FIXTURE_GH_EXISTS" ]] || exit 1
+	fi
+	if [[ "$*" == *isDraft* && "$*" == *--jq* ]]; then
+		printf '%s\n' "${FIXTURE_IS_DRAFT:-true}"
+		exit 0
+	fi
 	names="$(cd "$FIXTURE_DRAFT" && ls -1 | jq -R . | jq -s 'map({name: .})')"
 	body="${FIXTURE_RELEASE_BODY-# shellsentry v1.2.3
 
@@ -390,6 +421,27 @@ notes for v1.2.3
 		--arg name "${FIXTURE_RELEASE_TITLE:-shellsentry v1.2.3}" \
 		--arg body "$body" \
 		'{isDraft: $d, assets: $a, tagName: $tag, name: $name, body: $body}'
+	;;
+"release create")
+	mkdir -p "$FIXTURE_DRAFT"
+	[[ -n "${FIXTURE_GH_EXISTS:-}" ]] && : >"$FIXTURE_GH_EXISTS"
+	prev=""
+	for arg in "$@"; do
+		if [[ "$prev" == --notes-file && -f "$arg" ]]; then
+			cp "$arg" "$FIXTURE_DRAFT/.notes-body" 2>/dev/null || true
+		elif [[ "$arg" != --* && -f "$arg" ]]; then
+			cp "$arg" "$FIXTURE_DRAFT/"
+		fi
+		prev="$arg"
+	done
+	;;
+"release upload")
+	mkdir -p "$FIXTURE_DRAFT"
+	for arg in "$@"; do
+		if [[ "$arg" != --* && -f "$arg" ]]; then
+			cp "$arg" "$FIXTURE_DRAFT/"
+		fi
+	done
 	;;
 "release download")
 	if [[ "${FIXTURE_REPLACE_TAG_ON_DOWNLOAD:-}" == 1 ]]; then
@@ -423,6 +475,13 @@ restore_published_tag() {
 	cp "$root/scripts/release-verify-published-tag.sh" "$fixture_published_tag"
 	chmod +x "$fixture_published_tag"
 }
+restore_upload() {
+	cp "$root/scripts/upload-release-assets.sh" "$repo/scripts/upload-release-assets.sh"
+	chmod +x "$repo/scripts/upload-release-assets.sh"
+}
+fixture_upload="$repo/scripts/upload-release-assets.sh"
+grep -q 'gh release upload "$TAG" "$NOTES_FILE" --clobber' "$root/scripts/upload-release-assets.sh" ||
+	fail 'upload must attach release-notes-<tag>.md as a draft asset'
 stub_published_tag() {
 	cat >"$fixture_published_tag" <<'EOF'
 #!/usr/bin/env bash
@@ -1251,5 +1310,99 @@ if grep -q -- '--repo attacker/shellsentry' "$FIXTURE_LOG"; then
 	fail 'publish must ignore SHELLSENTRY_RELEASE_REPO'
 fi
 pass 'positive control signed with throwaway keys publishes after byte comparison'
+
+# Documented ceremony: create-draft, then notes, then upload, then publish.
+# create-draft refuses an existing release, so upload cannot run first.
+grep -q 'gh release upload "$TAG" "$NOTES_FILE" --clobber' "$fixture_upload" ||
+	fail 'fixture upload must attach release-notes-<tag>.md'
+python3 - "$root/RELEASE_CHECKLIST.md" <<'PY' || fail 'RELEASE_CHECKLIST ceremony order does not match'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+steps = [
+    "make release-create-draft",
+    "make release-notes",
+    "make release-upload",
+    "make release-publish",
+]
+idx = []
+for s in steps:
+    i = text.find(s)
+    if i < 0:
+        raise SystemExit(f"missing {s}")
+    idx.append(i)
+if idx != sorted(idx):
+    raise SystemExit(f"ceremony order is {steps} but appeared at {idx}")
+up = text[idx[2]:idx[3]]
+if "release-notes-" not in up:
+    raise SystemExit("release-upload section must name the notes asset")
+PY
+
+run_ceremony() {
+	local upload="$1"
+	stage
+	rm -rf "$scratch/draft"
+	mkdir -p "$scratch/draft" "$scratch/e2e-aside"
+	rm -f "$FIXTURE_GH_EXISTS"
+	mv "$d/shellsentry-minisign.pub" "$d/shellsentry-release-signing-key.asc" \
+		"$d/release-notes-v1.2.3.md" "$scratch/e2e-aside/"
+	if ! (cd "$repo" && ./scripts/release-create-draft.sh v1.2.3 "$d") \
+		>"$scratch/e2e-cd.out" 2>&1; then
+		fail "create-draft in ceremony must succeed (log: $(cat "$scratch/e2e-cd.out"))"
+	fi
+	mv "$scratch/e2e-aside"/* "$d/"
+	if ! (cd "$repo" && "$upload" v1.2.3 "$d") >"$scratch/e2e-up.out" 2>&1; then
+		fail "upload in ceremony must succeed (log: $(cat "$scratch/e2e-up.out"))"
+	fi
+}
+
+export FIXTURE_RELEASE_EXISTS=0
+export FIXTURE_GH_EXISTS="$scratch/gh-exists"
+: >"$FIXTURE_LOG"
+run_ceremony "$fixture_upload"
+[[ -f "$scratch/draft/release-notes-v1.2.3.md" ]] ||
+	fail 'ceremony upload must put release-notes-<tag>.md on the draft'
+cmp -s "$d/release-notes-v1.2.3.md" "$scratch/draft/release-notes-v1.2.3.md" ||
+	fail 'draft notes asset must match the staged notes file'
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/e2e-ok.err"; then
+	fail "create-draft then upload then publish must succeed (log: $(cat "$scratch/e2e-ok.err"))"
+fi
+[[ "$(grep -c '^release edit v1.2.3 .*--draft=false' "$FIXTURE_LOG")" == 1 ]] ||
+	fail 'ceremony publish must promote exactly once'
+pass 'create-draft then upload then publish promotes with the notes asset'
+
+if ! python3 - "$fixture_upload" "$fixture_upload" <<'PY'
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = '''echo "[upload] Release notes asset"
+gh release upload "$TAG" "$NOTES_FILE" --clobber
+'''
+if old not in text:
+    raise SystemExit('live upload is missing the notes-asset upload')
+mut = text.replace(old, '', 1)
+if 'gh release upload "$TAG" "$NOTES_FILE" --clobber' in mut:
+    raise SystemExit('notes-asset mutant still uploads NOTES_FILE')
+dest.write_text(mut)
+PY
+then
+	fail 'ceremony notes-asset mutant was not distinguished'
+fi
+chmod +x "$fixture_upload"
+: >"$FIXTURE_LOG"
+run_ceremony "$fixture_upload"
+if (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/e2e-mut.err"; then
+	fail 'accepted publish after dropping the notes-asset upload'
+fi
+grep -q 'draft assets differ from the expected set' "$scratch/e2e-mut.err" || {
+	echo "error: missing named rejection after dropping notes upload" >&2
+	cat "$scratch/e2e-mut.err" >&2
+	exit 1
+}
+restore_upload
+unset FIXTURE_RELEASE_EXISTS FIXTURE_GH_EXISTS
+pass 'dropping the notes-asset upload makes publish refuse the draft set'
 
 echo '[ok] publish promotes only a byte-verified, pin-signed draft bound to the tag'
