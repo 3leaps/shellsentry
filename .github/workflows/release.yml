@@ -69,22 +69,27 @@ jobs:
   build:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: verify-anchors
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - goos: linux
+          - runner: ubuntu-24.04
+            goos: linux
             goarch: amd64
-          - goos: linux
+          - runner: ubuntu-latest-arm64-s
+            goos: linux
             goarch: arm64
-          - goos: darwin
+          - runner: macos-15
+            goos: darwin
             goarch: arm64
-          - goos: windows
+          - runner: windows-2022
+            goos: windows
             goarch: amd64
-          - goos: windows
+          - runner: windows-latest-arm64-s
+            goos: windows
             goarch: arm64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
@@ -107,7 +112,16 @@ jobs:
         with:
           go-version: '1.26.10'
 
+      - name: Assert native host
+        run: |
+          set -euo pipefail
+          host="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"
+          want="${{ matrix.goos }}/${{ matrix.goarch }}"
+          test "$host" = "$want"
+          echo "runner host $host matches $want"
+
       - name: License check
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         # Pin go-licenses; do not use @latest on the release path.
         run: |
           go install github.com/google/go-licenses@v1.5.0
@@ -117,9 +131,6 @@ jobs:
             echo "GPL/AGPL detected—blocked"
             exit 1
           fi
-
-      - name: Install package dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip
 
       - name: Build
         run: make build
@@ -135,7 +146,9 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then
             ARCHIVE="${ASSET}.zip"
             (cd bin && mv "${ASSET}.exe" "shellsentry.exe")
-            zip -j "${ARCHIVE}" "bin/shellsentry.exe"
+            py=python3
+            command -v python3 >/dev/null 2>&1 || py=python
+            "$py" -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); z.write("bin/shellsentry.exe","shellsentry.exe")' "${ARCHIVE}"
             (cd bin && mv "shellsentry.exe" "${ASSET}.exe")
           else
             ARCHIVE="${ASSET}.tar.gz"

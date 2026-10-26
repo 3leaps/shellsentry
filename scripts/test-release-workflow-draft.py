@@ -2,8 +2,9 @@
 """Regression checks for the read-only tag workflow.
 
 The tag workflow is artifacts-only: it must not create a GitHub Release, must
-not request contents: write, must not use action-gh-release, and must pin a
-fixed runner label. Publication stays on the maintainer machine.
+not request contents: write, must not use action-gh-release, and must build
+on five native runners with fixed labels. Publication stays on the
+maintainer machine.
 """
 
 import re
@@ -29,6 +30,16 @@ BANNED = (
     "contents: write",
     "GITHUB_TOKEN: ${{ secrets",
 )
+FLOATING_LABEL_RE = re.compile(
+    r"(?m)^\s+(?:runs-on|runner):\s*(ubuntu-latest|macos-latest|windows-latest)\s*$"
+)
+NATIVE_CELLS = (
+    ("ubuntu-24.04", "linux", "amd64"),
+    ("ubuntu-latest-arm64-s", "linux", "arm64"),
+    ("macos-15", "darwin", "arm64"),
+    ("windows-2022", "windows", "amd64"),
+    ("windows-latest-arm64-s", "windows", "arm64"),
+)
 
 
 def validate(text: str) -> tuple[bool, str]:
@@ -52,10 +63,28 @@ def validate(text: str) -> tuple[bool, str]:
         failures.append("tag workflow must upload artifacts (no GitHub Release)")
     if "release-packages-" not in text:
         failures.append("tag workflow must upload a combined release-packages artifact")
-    if re.search(r"runs-on:\s*ubuntu-latest\b", text):
-        failures.append("tag workflow must not use ubuntu-latest")
-    if not re.search(r"runs-on:\s*ubuntu-24\.04\b", text):
-        failures.append("tag workflow must use ubuntu-24.04")
+    if FLOATING_LABEL_RE.search(text):
+        failures.append("tag workflow must not use ubuntu-latest, macos-latest, or windows-latest")
+    if not re.search(r"(?m)^\s+runs-on:\s*ubuntu-24\.04\s*$", text):
+        failures.append("tag workflow must pin ubuntu-24.04 for non-matrix jobs")
+    if not re.search(r"(?m)^  build:\n(?:.*\n)*?    runs-on:\s*\$\{\{\s*matrix\.runner\s*\}\}\s*$", text):
+        failures.append("build must run on matrix.runner")
+    for runner, goos, goarch in NATIVE_CELLS:
+        cell = re.compile(
+            rf"- runner:\s*{re.escape(runner)}\n\s+goos:\s*{re.escape(goos)}\n\s+goarch:\s*{re.escape(goarch)}\b"
+        )
+        if not cell.search(text):
+            failures.append(f"build matrix missing native cell {goos}/{goarch} on {runner}")
+    if 'host="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"' not in text:
+        failures.append("build must assert GOHOSTOS/GOHOSTARCH")
+    if 'want="${{ matrix.goos }}/${{ matrix.goarch }}"' not in text:
+        failures.append("build must compare the host to matrix.goos/goarch")
+    if 'test "$host" = "$want"' not in text:
+        failures.append("build must require the runner host to match the matrix cell")
+    if re.search(r"apt-get install[^\n]*\bzip\b", text):
+        failures.append("tag build must not apt-get zip")
+    if "zipfile" not in text:
+        failures.append("windows archives must be packed with python zipfile")
     if not re.search(r"(?m)^  build:\n(?:.*\n)*?    needs: verify-anchors\b", text):
         failures.append("build must need verify-anchors")
     install = text.find("ci-install-decernor.sh")
@@ -66,7 +95,7 @@ def validate(text: str) -> tuple[bool, str]:
         failures.append("tag workflow must install Decernor before verifying anchors")
     if failures:
         return False, "; ".join(failures)
-    return True, "tag workflow is read-only and never creates a release"
+    return True, "tag workflow is read-only and builds on five native runners"
 
 
 def mutate_insert_action(text: str) -> str:
@@ -123,6 +152,27 @@ def mutate_drop_combined_artifact(text: str) -> str:
     return text.replace("release-packages-", "platform-packages-", 1)
 
 
+def mutate_cross_compile(text: str) -> str:
+    mut = text.replace("runs-on: ${{ matrix.runner }}", "runs-on: ubuntu-24.04", 1)
+    if "matrix.runner" in mut.split("  build:", 1)[1].split("  collect-packages:", 1)[0]:
+        raise SystemExit("cross-compile mutant still uses matrix.runner")
+    return mut
+
+
+def mutate_drop_host_assert(text: str) -> str:
+    old = 'host="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"'
+    if old not in text:
+        raise SystemExit("live workflow is missing the native host assert")
+    return text.replace(old, 'host="linux/amd64"', 1)
+
+
+def mutate_macos_latest(text: str) -> str:
+    mut = text.replace("macos-15", "macos-latest", 1)
+    if "macos-15" in mut:
+        raise SystemExit("macos-latest mutant still has macos-15")
+    return mut
+
+
 workflow = WORKFLOW.read_text(encoding="utf-8")
 valid, message = validate(workflow)
 if not valid:
@@ -139,6 +189,9 @@ for label, mutator in (
     ("persist-credentials true", mutate_persist_credentials),
     ("gh api release write", mutate_gh_api_write),
     ("combined release-packages artifact removed", mutate_drop_combined_artifact),
+    ("cross-compile on ubuntu-24.04", mutate_cross_compile),
+    ("native host assert dropped", mutate_drop_host_assert),
+    ("macos-latest runner", mutate_macos_latest),
 ):
     fixture = mutator(workflow)
     valid, _ = validate(fixture)
