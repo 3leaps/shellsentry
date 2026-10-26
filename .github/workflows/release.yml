@@ -78,7 +78,7 @@ jobs:
           - runner: ubuntu-24.04
             goos: linux
             goarch: amd64
-          - runner: ubuntu-latest-arm64-s
+          - runner: ubuntu-24.04-arm64-s
             goos: linux
             goarch: arm64
           - runner: macos-15
@@ -87,7 +87,7 @@ jobs:
           - runner: windows-2022
             goos: windows
             goarch: amd64
-          - runner: windows-latest-arm64-s
+          - runner: windows-11-arm64-s
             goos: windows
             goarch: arm64
     steps:

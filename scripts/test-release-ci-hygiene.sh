@@ -278,15 +278,51 @@ check_ci() {
 check_ci "$WF_DIR/ci.yml" >/dev/null || fail "ci.yml native guards rejected the live workflow"
 pass "ci.yml pins five native runners, refuses skippable build steps, and packs Windows zips"
 
+python3 - <<'PY' || fail "expected-runner table or self-hosted allowlist drifted"
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path("scripts").resolve()))
+from workflow_native_guards import CI_JOBS, PINNED_SELF_HOSTED_LABELS
+
+want = {
+    "test-linux-arm64": "ubuntu-24.04-arm64-s",
+    "windows-dogfood-arm64": "windows-11-arm64-s",
+}
+for job, runner in want.items():
+    got = CI_JOBS.get(job, (None, None))[0]
+    if got != runner:
+        raise SystemExit(f"{job} table runner is {got!r}, want {runner!r}")
+if PINNED_SELF_HOSTED_LABELS != frozenset(want.values()):
+    raise SystemExit(
+        f"PINNED_SELF_HOSTED_LABELS is {sorted(PINNED_SELF_HOSTED_LABELS)!r}, "
+        f"want {sorted(want.values())!r}"
+    )
+text = Path(".github/actionlint.yaml").read_text()
+labels = [ln.strip()[2:].strip() for ln in text.splitlines() if ln.strip().startswith("- ")]
+if set(labels) != PINNED_SELF_HOSTED_LABELS or len(labels) != len(PINNED_SELF_HOSTED_LABELS):
+    raise SystemExit(
+        f"actionlint.yaml labels {labels!r} != {sorted(PINNED_SELF_HOSTED_LABELS)!r}"
+    )
+print("ok")
+PY
+pass "arm64 jobs, allowlist, and actionlint.yaml share the versioned org labels"
+
+retired_needle="latest"$'-arm64'
+if git grep -n -F -- "$retired_needle" -- .; then
+    fail "retired runner labels matching ${retired_needle} must not appear"
+fi
+pass "retired ${retired_needle} runner labels are absent"
+
 python3 - "$WF_DIR/ci.yml" "$scratch/ci-ubuntu-latest.yml" <<'PY' || fail "ubuntu-latest mutant was not distinguished"
 from pathlib import Path
 import sys
 src, dest = Path(sys.argv[1]), Path(sys.argv[2])
 text = src.read_text()
-old = "    runs-on: ubuntu-24.04"
+old = "    runs-on: ubuntu-24.04\n"
 if old not in text:
     raise SystemExit("live ci.yml is missing ubuntu-24.04")
-mut = text.replace(old, "    runs-on: ubuntu-latest", 1)
+mut = text.replace(old, "    runs-on: ubuntu-latest\n", 1)
 if old in mut:
     raise SystemExit("ubuntu-latest mutant still has ubuntu-24.04")
 dest.write_text(mut)
@@ -337,6 +373,90 @@ fi
 grep -q 'windows-latest' "$scratch/ci-windows-latest.err" ||
 	fail "windows-latest mutant refusal (log: $(cat "$scratch/ci-windows-latest.err"))"
 pass "changing windows-2022 to windows-latest fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-linux-arm64-retired.yml" <<'PY' || fail "linux arm64 retired-label mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "    runs-on: ubuntu-24.04-arm64-s"
+new = "    runs-on: ubuntu-" + "latest" + "-arm64-s"
+if old not in text:
+    raise SystemExit("live ci.yml is missing ubuntu-24.04-arm64-s")
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit("linux arm64 retired-label mutant still has ubuntu-24.04-arm64-s")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-linux-arm64-retired.yml" >/dev/null 2>"$scratch/ci-linux-arm64-retired.err"; then
+	fail "hygiene accepted ci.yml after restoring the retired linux arm64 runner"
+fi
+grep -q 'ubuntu-24.04-arm64-s' "$scratch/ci-linux-arm64-retired.err" ||
+	fail "linux arm64 retired-label mutant refusal (log: $(cat "$scratch/ci-linux-arm64-retired.err"))"
+pass "restoring the retired linux arm64 runner fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-windows-arm64-retired.yml" <<'PY' || fail "windows arm64 retired-label mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "    runs-on: windows-11-arm64-s"
+new = "    runs-on: windows-" + "latest" + "-arm64-s"
+if old not in text:
+    raise SystemExit("live ci.yml is missing windows-11-arm64-s")
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit("windows arm64 retired-label mutant still has windows-11-arm64-s")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-windows-arm64-retired.yml" >/dev/null 2>"$scratch/ci-windows-arm64-retired.err"; then
+	fail "hygiene accepted ci.yml after restoring the retired windows arm64 runner"
+fi
+grep -q 'windows-11-arm64-s' "$scratch/ci-windows-arm64-retired.err" ||
+	fail "windows arm64 retired-label mutant refusal (log: $(cat "$scratch/ci-windows-arm64-retired.err"))"
+pass "restoring the retired windows arm64 runner fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-linux-arm64-wrong.yml" <<'PY' || fail "linux arm64 table-drift mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "    runs-on: ubuntu-24.04-arm64-s"
+new = "    runs-on: ubuntu-24.04"
+if old not in text:
+    raise SystemExit("live ci.yml is missing ubuntu-24.04-arm64-s")
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit("linux arm64 table-drift mutant still has ubuntu-24.04-arm64-s")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-linux-arm64-wrong.yml" >/dev/null 2>"$scratch/ci-linux-arm64-wrong.err"; then
+	fail "hygiene accepted ci.yml after moving linux arm64 off its table runner"
+fi
+grep -q 'test-linux-arm64 must run on ubuntu-24.04-arm64-s' "$scratch/ci-linux-arm64-wrong.err" ||
+	fail "linux arm64 table-drift mutant refusal (log: $(cat "$scratch/ci-linux-arm64-wrong.err"))"
+pass "moving linux arm64 off its table runner fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-windows-arm64-wrong.yml" <<'PY' || fail "windows arm64 table-drift mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "    runs-on: windows-11-arm64-s"
+new = "    runs-on: windows-2022"
+if old not in text:
+    raise SystemExit("live ci.yml is missing windows-11-arm64-s")
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit("windows arm64 table-drift mutant still has windows-11-arm64-s")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-windows-arm64-wrong.yml" >/dev/null 2>"$scratch/ci-windows-arm64-wrong.err"; then
+	fail "hygiene accepted ci.yml after moving windows arm64 off its table runner"
+fi
+grep -q 'windows-dogfood-arm64 must run on windows-11-arm64-s' "$scratch/ci-windows-arm64-wrong.err" ||
+	fail "windows arm64 table-drift mutant refusal (log: $(cat "$scratch/ci-windows-arm64-wrong.err"))"
+pass "moving windows arm64 off its table runner fails this check"
 
 python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-host.yml" <<'PY' || fail "host-assert mutant was not distinguished"
 from pathlib import Path

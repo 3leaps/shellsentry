@@ -137,7 +137,7 @@ jobs:
 
   test-linux-arm64:
     name: Linux quality (arm64)
-    runs-on: ubuntu-latest-arm64-s
+    runs-on: ubuntu-24.04-arm64-s
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
@@ -319,7 +319,7 @@ jobs:
 
   windows-dogfood-arm64:
     name: Windows dogfood (arm64)
-    runs-on: windows-latest-arm64-s
+    runs-on: windows-11-arm64-s
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
