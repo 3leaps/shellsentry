@@ -7,7 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/jedisct1/go-minisign v0.0.0-20260527172527-a09352b57a22
 	github.com/spf13/cobra v1.10.2
-	mvdan.cc/sh/v3 v3.13.1
+	mvdan.cc/sh/v3 v3.14.1
 )
 
 require (
