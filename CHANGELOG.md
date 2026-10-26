@@ -7,7 +7,7 @@ Semantic Versioning.
 
 ## [Unreleased]
 
-## [0.1.8] - 2026-10-25
+## [0.1.8] - 2026-10-26
 
 ### Fixed
 
@@ -15,12 +15,10 @@ Semantic Versioning.
   `bin/`). `make gosec-high` fails closed if `gosec` is missing, instead of
   exiting 127 when goneat cooling skips a newer `@latest` build. It also
   asserts the binary on PATH matches `GOSEC_VERSION`.
-- **Release workflow cannot publish.** Tag-push CI creates a draft GitHub
-  release (`draft: true` on every `action-gh-release` step, scanned across
-  every workflow file). The action is pinned to `softprops/action-gh-release`
-  v3.0.3 by commit SHA. The `build` job is `contents: read` and only uploads
-  artifacts; a separate `upload` job with `contents: write` attaches them to
-  the draft.
+- **Tag workflow is read-only.** Tag-push CI verifies committed public
+  anchors, builds five native platforms, and uploads archives as artifacts.
+  It never creates a GitHub Release, never signs, and never requests
+  `contents: write`. Drafting and publishing stay on the operator machine.
 - **Workflow actions are SHA-pinned.** Every `uses:` in `.github/workflows`
   is a 40-character commit SHA with a version comment, including
   `actions/checkout` and `actions/setup-go`. `download-artifact` is v7.0.0 to
@@ -37,17 +35,50 @@ Semantic Versioning.
   download the installer, verify `SHA256SUMS` plus minisign or PGP, optionally
   run shellsentry on it, then execute. Checksums use `sha256sum -c -` or
   `shasum -a 256 -c`, and `set -e` stops the run if a check fails.
-  `scripts/test-no-pipe-to-shell-docs.sh` fails if a `curl ... | bash` recipe,
-  a bare `sha256sum -c`, or an unchained installer run is restored.
+  PGP examples fetch `shellsentry-release-signing-key.asc` from the release
+  instead of importing a checkout path, require exactly one primary matching
+  `0CACA49B3119B6BC12B2CA11B9B485F294B9FE07`, and verify with
+  `gpgv --keyring` plus `[GNUPG:] VALIDSIG` for signing subkey
+  `DAB70DD758911B26BB45A08C3B75AC591449DEBE`.
+  `scripts/test-no-pipe-to-shell-docs.sh` fails if a `curl ... | bash`
+  recipe, a bare `sha256sum -c`, an unchained installer run, a checkout
+  PGP import, a first-fingerprint-only check, or a two-key bundle is
+  restored.
+- **Draft notes asset matches the tagged notes.** `make release-upload`
+  attaches `release-notes-<tag>.md`. `make release-publish` byte-compares
+  that asset to `docs/releases/<tag>.md` at the tagged commit. GitHub
+  release titles drop a leading `# ` from that heading.
+- **Release archives bind to the tagged version.** Packaged binaries carry a
+  unique delimited version label, a real-date `buildTime`, and the tagged
+  `gitCommit`. A byte scan cannot attribute those strings to a specific `-X`
+  variable, so the source is pinned by `mod`, `vcs.revision`, and
+  `vcs.modified`. The publish path refuses a draft whose version does not
+  match the tag.
+- **Installer previous-key cutoff ignores the environment.**
+  `SHELLSENTRY_PREVKEY_MAX` is the quoted literal `v0.1.6`. Exporting a
+  larger value before loading the installer does not make v0.1.7 verify
+  under the previous key.
 
 ### Added
 
 - **Signed-tag release ceremony.** `make release-tag` creates a local signed
-  annotated tag and verifies it against the committed public pin
-  (`docs/security/release-signing-keys.asc`, `keys/expected-fingerprints.txt`).
-  `make release-publish` re-downloads the draft, byte-compares it to local
-  `SHA256SUMS`, then publishes. Tagging and publish scripts refuse
+  annotated tag from `SHELLSENTRY_RELEASE_TAG` and verifies it against the
+  committed public pin (`docs/security/release-signing-keys.asc`,
+  `keys/expected-fingerprints.txt`). `make release-create-draft` opens the
+  GitHub draft from locally staged packages. `make release-publish`
+  re-downloads the draft, byte-compares `SHA256SUMS` and every listed asset,
+  then publishes. Tagging, upload, and publish scripts refuse
   `GITHUB_ACTIONS` and do not run in CI.
+- **Committed public identity.** Release preflight binds
+  `SHELLSENTRY_DECERNOR_BIN` and checks GPG and minisign exports against the
+  fingerprint anchors in the tagged commit. Staged keys come from that
+  commit, not the working tree. CI installs Decernor from a digest pin.
+- **Native five-platform CI.** Pull requests and tag builds run on
+  linux/amd64, linux/arm64, darwin/arm64, windows/amd64, and windows/arm64
+  with a matching `GOHOSTOS`/`GOHOSTARCH` check. Platform steps refuse the
+  common soft-fail forms (`continue-on-error`, `if: false`, and `|| true`).
+  Windows archives are packed
+  with `scripts/package-windows-zip.sh` and a SHA-pinned `actions/setup-python`.
 
 ### Changed
 
@@ -59,6 +90,11 @@ Semantic Versioning.
 - **Verified bootstrap pin.** sfetch v0.4.15, engine and action commit
   `c44577261902c848119d3c89b0138becb613b158` (peeled signed tag). goneat
   stays v0.6.6.
+- **Parser and lint pins.** `mvdan.cc/sh/v3` v3.14.1, staticcheck v0.8.2,
+  govulncheck v1.9.0.
+- **Installer previous-key map is frozen.** Tags at or below v0.1.6 keep the
+  previous keys; v0.1.7 and later stay on the current keys. The cutoff is
+  not raised to retire historical installs.
 
 ## [0.1.7] - 2026-10-21
 

@@ -193,14 +193,17 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
     make release-notes
     ```
 
-11. **Upload remaining keys** (draft is preserved)
+11. **Upload remaining assets** (draft is preserved)
 
     ```bash
     make release-upload
     ```
 
-    Uploads assets with `--clobber` and edits notes with `--draft=true`.
-    Promotion is the next step, after byte verification.
+    Uploads remaining assets with `--clobber`, including the tagged notes
+    file as `release-notes-$SHELLSENTRY_RELEASE_TAG.md`, the staged public
+    keys, and signatures. Edits the release body with `--notes-file` and
+    `--draft=true`. `release-publish` byte-compares that notes asset to
+    `docs/releases/<tag>.md` at the tagged commit. Promotion is next.
 
 ## 3. Publish (byte-verified)
 
@@ -213,7 +216,8 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
   `release-publish` re-verifies the staged tag through the shared tag-anchor
   (fetches `origin/main` first), requires the GitHub release `tagName`,
   title, and body to match the signed tag and tagged notes, requires an
-  exact draft asset set, checks both manifests and their minisign/PGP
+  exact draft asset set (including `release-notes-<tag>.md`, byte-compared
+  to the tagged notes blob), checks both manifests and their minisign/PGP
   signatures against pins in the tagged commit, binds each archive so
   `go version -m` `mod` equals the tag, there is exactly one delimited
   version label for the tag without the leading v, exactly one real

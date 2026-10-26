@@ -87,6 +87,34 @@ grep -q -- '--title "$title"' "$script" ||
 if grep -qE -- '--title "\$tag"' "$script"; then
 	fail 'create-draft must not use the tag as the release title'
 fi
+STRIP='title = line[2:] if line.startswith("# ") else line'
+grep -Fq "$STRIP" "$script" ||
+	fail 'create-draft must strip a leading "# " from the notes title'
+grep -Fq "$STRIP" "$root/scripts/release-publish.sh" ||
+	fail 'publish must strip a leading "# " identically'
+python3 - "$script" "$root/scripts/release-publish.sh" <<'PY' || fail '## x and #x titles must stay unchanged in both scripts'
+from pathlib import Path
+import sys
+
+needle = 'title = line[2:] if line.startswith("# ") else line'
+assign = 'line = notes.splitlines()[0] if notes.strip() else ""\n' + needle
+
+def title_from(path, notes):
+    text = Path(path).read_text()
+    if needle not in text:
+        raise SystemExit(f'{path} is missing the heading strip')
+    ns = {"notes": notes}
+    exec(assign, ns)
+    return ns["title"]
+
+for script in sys.argv[1:]:
+    if title_from(script, "## x\n") != "## x":
+        raise SystemExit(f'{script} must leave "## x" unchanged')
+    if title_from(script, "#x\n") != "#x":
+        raise SystemExit(f'{script} must leave "#x" unchanged')
+    if title_from(script, "# hello\n") != "hello":
+        raise SystemExit(f'{script} must strip a leading "# "')
+PY
 grep -q 'release-verify-tag-anchor.sh' "$script" || fail 'release-create-draft.sh must verify the tag against origin'
 grep -q 'cat-file blob "$commit:docs/releases/' "$script" ||
 	fail 'release-create-draft.sh must read release notes from the tagged commit'
@@ -198,7 +226,7 @@ restore_draft() {
 }
 gpg --batch --armor --export "$primary" >"$fixture/docs/security/release-signing-keys.asc"
 cp "$scratch/good.pub" "$fixture/docs/security/shellsentry-minisign.pub"
-printf 'notes for v1.2.3\n' >"$fixture/docs/releases/v1.2.3.md"
+printf '# shellsentry v1.2.3\n\nnotes for v1.2.3\n' >"$fixture/docs/releases/v1.2.3.md"
 blob="$(python3 -c 'import base64,hashlib,pathlib,sys; print(hashlib.sha256(base64.b64decode(pathlib.Path(sys.argv[1]).read_text().splitlines()[1])).hexdigest())' "$scratch/good.pub")"
 printf 'gpg %s\nminisign %s\n' "$primary" "$blob" >"$fixture/keys/expected-fingerprints.txt"
 printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$fixture/keys/expected-fingerprints.ndjson"
@@ -420,18 +448,53 @@ fi
 grep -q 'SHA256SUMS.minisig' "$GH_TRACE.create" || fail 'draft must upload minisign signatures'
 grep -q 'SHA256SUMS.asc' "$GH_TRACE.create" || fail 'draft must upload GPG signatures'
 grep -q 'release-notes.md' "$GH_TRACE.create" || fail 'draft must pass notes extracted from the tagged commit'
-grep -q -- '--title notes for v1.2.3' "$GH_TRACE.create" ||
-	fail 'gh release create must pass --title from the first line of the tagged notes'
+grep -q -- '--title shellsentry v1.2.3' "$GH_TRACE.create" ||
+	fail 'gh release create must pass --title from the notes heading without a leading "# "'
+if grep -Fq -- '--title # shellsentry v1.2.3' "$GH_TRACE.create"; then
+	fail 'create-draft must strip a leading "# " from the notes title'
+fi
 if grep -q "$fixture/docs/releases" "$GH_TRACE.create"; then
 	fail 'draft must not read release notes from the working tree'
 fi
 [[ -s "$GH_TRACE.notes" ]] || fail 'gh stub must record the notes file'
+grep -qx '# shellsentry v1.2.3' "$GH_TRACE.notes" ||
+	fail "notes must keep the markdown heading (got: $(cat "$GH_TRACE.notes"))"
 grep -qx 'notes for v1.2.3' "$GH_TRACE.notes" ||
 	fail "notes must come from the tagged commit (got: $(cat "$GH_TRACE.notes"))"
 if grep -q 'working-tree notes must not be used' "$GH_TRACE.notes"; then
 	fail 'draft must not read release notes from the working tree'
 fi
 pass "create-draft opens a verified draft from real signed packages"
+
+if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = 'title = line[2:] if line.startswith("# ") else line'
+new = 'title = line'
+if old not in text:
+    raise SystemExit('live create-draft is missing the heading strip')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('heading-strip mutant still strips')
+dest.write_text(mut)
+PY
+then
+	fail 'create-draft heading-strip mutant was not distinguished'
+fi
+chmod +x "$fixture_script"
+: >"$GH_TRACE"
+rm -f "$GH_TRACE.create"
+if ! run_draft "$scratch/dist" >/dev/null 2>"$scratch/mut-title.err"; then
+	fail "heading-strip mutant must still create a draft (log: $(cat "$scratch/mut-title.err"))"
+fi
+if grep -q -- '--title shellsentry v1.2.3' "$GH_TRACE.create" &&
+	! grep -Fq -- '--title # shellsentry v1.2.3' "$GH_TRACE.create"; then
+	fail 'accepted create-draft after dropping the heading strip'
+fi
+restore_draft
+pass 'create-draft heading-strip mutant is distinguished'
 
 : >"$GH_TRACE"
 export FIXTURE_VIEW_RC=0

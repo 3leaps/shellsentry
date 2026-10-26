@@ -45,6 +45,8 @@ if [ ${#SIGNATURES[@]} -gt 0 ]; then
 else
     echo "[warn] No signature files found; skipping"
 fi
+echo "[upload] Release notes asset"
+gh release upload "$TAG" "$NOTES_FILE" --clobber
 echo "[notes] Updating release notes (draft preserved)"
 gh release edit "$TAG" --notes-file "$NOTES_FILE" --draft=true
 echo "[ok] Draft release updated"

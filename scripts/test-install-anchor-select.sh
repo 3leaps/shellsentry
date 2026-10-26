@@ -179,6 +179,53 @@ if command -v minisign >/dev/null 2>&1; then
     if verify_as v0.1.7 old; then fail "v0.1.7 must reject a legacy-key signature (no fallback)"; fi
     pass "selection through verify_signature: each generation accepts only its own key"
 
+    # Hostile ambient PREVKEY_MAX must not expand the previous-key range.
+    # Load the installer AFTER exporting so ${SHELLSENTRY_PREVKEY_MAX:-v0.1.6}
+    # would capture v9.9.9 and treat v0.1.7 as previous-key-signed.
+    d_hostile="$(mktemp -d "$WORK/h.XXXXXX")"
+    cp "$WORK/SHA256SUMS" "$d_hostile/SHA256SUMS"
+    minisign -S -s "$WORK/old.key" -m "$d_hostile/SHA256SUMS" -x "$d_hostile/SHA256SUMS.minisig" >/dev/null 2>&1 ||
+        fail "sign as old for hostile PREVKEY_MAX"
+    v017_accepts_legacy_under_hostile_prevkey() {
+        local src="$1" sumsdir="$2"
+        (
+            export SHELLSENTRY_PREVKEY_MAX=v9.9.9
+            unset SHELLSENTRY_MINISIGN_PUBKEY SHELLSENTRY_PGP_FPR
+            # shellcheck disable=SC1090
+            . "$src"
+            SHELLSENTRY_MINISIGN_PUBKEY="$(sed -n 2p "$WORK/cur.pub")"
+            SHELLSENTRY_MINISIGN_PUBKEY_LEGACY="$(sed -n 2p "$WORK/old.pub")"
+            VERIFY_MINISIGN=true VERIFY_GPG=false REQUIRE_MINISIGN=true REQUIRE_SIGNATURE=true
+            select_trust_anchor v0.1.7
+            verify_signature "$sumsdir/SHA256SUMS" "$sumsdir"
+        ) >/dev/null 2>&1
+    }
+    if v017_accepts_legacy_under_hostile_prevkey "$SRC_COPY" "$d_hostile"; then
+        fail "hostile PREVKEY_MAX must not make v0.1.7 accept the previous key"
+    fi
+    pass "hostile PREVKEY_MAX does not make v0.1.7 accept the previous key"
+
+    python3 - "$SRC_COPY" "$WORK/prevkey-env.sh" <<'PY' || fail "PREVKEY_MAX env-default mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+live = 'SHELLSENTRY_PREVKEY_MAX="v0.1.6"'
+old = 'SHELLSENTRY_PREVKEY_MAX="${SHELLSENTRY_PREVKEY_MAX:-v0.1.6}"'
+if live not in text:
+    raise SystemExit("live installer is missing the PREVKEY_MAX literal")
+if old in text:
+    raise SystemExit("live installer already accepts PREVKEY_MAX from the environment")
+mut = text.replace(live, old, 1)
+if old not in mut:
+    raise SystemExit("mutant did not restore the environment default")
+dest.write_text(mut)
+PY
+    if ! v017_accepts_legacy_under_hostile_prevkey "$WORK/prevkey-env.sh" "$d_hostile"; then
+        fail "PREVKEY_MAX env-default mutant still refused the previous key for v0.1.7"
+    fi
+    pass "PREVKEY_MAX env-default mutant is distinguished"
+
     # GPG route (minisign not required): the fingerprint pin follows the tag.
     if command -v gpg >/dev/null 2>&1; then
         GH="$WORK/gnupg"
