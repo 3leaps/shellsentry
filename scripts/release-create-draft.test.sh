@@ -66,6 +66,12 @@ grep -q 'mod version is not' "$root/scripts/release-bind-archives.sh" ||
 	fail 'release-bind-archives.sh must bind go version -m mod to the tag exactly'
 grep -q 'archive is not bound to tag version' "$root/scripts/release-bind-archives.sh" ||
 	fail 'release-bind-archives.sh must bind the main.version Go string to the tag'
+grep -q 'archive version label is not unique' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must require exactly one delimited version label'
+grep -q 'archive buildTime is not RFC3339' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must require a delimited RFC3339 buildTime'
+grep -q 'archive gitCommit is not the tagged commit' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must require a delimited 40-hex gitCommit'
 grep -q -- '--title "$title"' "$script" ||
 	fail 'create-draft must set the release title from the first line of the tagged notes'
 if grep -qE -- '--title "\$tag"' "$script"; then
@@ -190,6 +196,7 @@ git -C "$fixture" add docs keys scripts internal main.go go.mod go.sum
 git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
 full="$(git -C "$fixture" rev-parse HEAD)"
 short="$(git -C "$fixture" rev-parse --short HEAD)"
+rfc3339='2020-01-02T03:04:05Z'
 go_build() {
 	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
 		CGO_ENABLED=0 go build "$@"
@@ -198,7 +205,7 @@ mkdir -p "$scratch/bin"
 # Stamp mod as v0.9.9 on this same commit, then retag v1.2.3 for the gate.
 git -C "$fixture" tag -a v0.9.9 -m tmp
 (cd "$fixture" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/wrong-version" .)
 git -C "$fixture" tag -d v0.9.9 >/dev/null
 GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
@@ -211,32 +218,56 @@ git -C "$fixture" push -q origin HEAD:main
 git -C "$fixture" push -q origin v1.2.3
 git -C "$fixture" fetch -q origin
 (cd "$fixture" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/shellsentry" .)
 [[ -s "$scratch/bin/shellsentry" ]] || fail 'fixture binary missing'
 (cd "$fixture" && go_build -buildvcs=false -trimpath \
-	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=deadbee000000000000000000000000000000000" \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=deadbee000000000000000000000000000000000 -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/wrong-commit" .)
 (cd "$fixture" && GOOS=darwin GOARCH=arm64 go_build -trimpath \
-	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/shellsentry-darwin" .)
 [[ -s "$scratch/bin/shellsentry-darwin" ]] || fail 'darwin fixture binary missing'
 (cd "$fixture" && go_build -buildvcs=false -trimpath \
-	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=zz${short}" \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=zz${short} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/forged-zz" .)
 (cd "$fixture" && go_build -buildvcs=false -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=cafebabeface0000000000000000000000000000 -X main.buildTime=${full}" \
 	-o "$scratch/bin/forged-buildtime" .)
 # Tagged builds: mod and vcs.revision match, but main.version does not.
 (cd "$fixture" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full}" \
+	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/wrong-ldflag-999" .)
 (cd "$fixture" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=x1.2.3 -X main.gitCommit=${full}" \
+	-ldflags="-s -w -X main.version=x1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/wrong-ldflag-x" .)
 (cd "$fixture" && go_build -trimpath \
-	-ldflags="-s -w -X main.gitCommit=${full}" \
+	-ldflags="-s -w -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/wrong-ldflag-dev" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=X1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
+	-o "$scratch/bin/wrong-ldflag-X" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.30 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
+	-o "$scratch/bin/wrong-ldflag-130" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=pre-1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
+	-o "$scratch/bin/wrong-ldflag-pre" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=release_1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
+	-o "$scratch/bin/wrong-ldflag-rel" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full} -X main.buildTime=1.2.3" \
+	-o "$scratch/bin/stuffed-buildtime" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=1.2.3 -X main.buildTime=${rfc3339}" \
+	-o "$scratch/bin/stuffed-gitcommit" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=-1.2.3 -X main.buildTime=${rfc3339}" \
+	-o "$scratch/bin/stuffed-gitcommit-dash" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.Version=1.2.3" \
+	-o "$scratch/bin/double-version" .)
 printf 'working-tree notes must not be used\n' >"$fixture/docs/releases/v1.2.3.md"
 
 pack_from() {
@@ -724,6 +755,7 @@ import sys
 text = Path(sys.argv[1]).read_text()
 old = '''	if ! python3 - "$bin" "$version" "$tag" "$commit" "$info" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 data = Path(sys.argv[1]).read_bytes()
@@ -834,17 +866,21 @@ if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '''if not delimited_version(version):
+old = '''if hits == 0:
     raise SystemExit("error: archive is not bound to tag version " + version)
+if hits != 1:
+    raise SystemExit("error: archive version label is not unique")
 '''
-new = '''if False and not delimited_version(version):
+new = '''if False and hits == 0:
     raise SystemExit("error: archive is not bound to tag version " + version)
+if False and hits != 1:
+    raise SystemExit("error: archive version label is not unique")
 '''
 if old not in text:
     raise SystemExit('live script is missing the main.version byte scan')
 mut = text.replace(old, new, 1)
-if 'if not delimited_version(version):' in mut:
-    raise SystemExit('version-scan mutant still requires delimited main.version')
+if 'if hits == 0:' in mut:
+    raise SystemExit('version-scan mutant still requires a delimited main.version')
 Path(sys.argv[2]).write_text(mut)
 PY
 then
@@ -863,6 +899,187 @@ fi
 restore_draft
 pass 'reverting the main.version byte scan accepts 9.9.9, x1.2.3, and default dev'
 
+refuse_ldflag() {
+	local name="$1" bin="$2" why="$3"
+	local dest="$scratch/$name"
+	pack_from "$bin" "$dest"
+	sign_dir "$dest"
+	if run_draft "$dest" >/dev/null 2>"$scratch/$name.err"; then
+		fail "create-draft must refuse $why"
+	fi
+	grep -q 'not bound to signed tag' "$scratch/$name.err" ||
+		fail "$name refusal (log: $(cat "$scratch/$name.err"))"
+	pass "create-draft refuses $why"
+}
+
+refuse_ldflag wrong-ldflag-X "$scratch/bin/wrong-ldflag-X" '-X main.version=X1.2.3'
+refuse_ldflag wrong-ldflag-130 "$scratch/bin/wrong-ldflag-130" '-X main.version=1.2.30'
+refuse_ldflag wrong-ldflag-pre "$scratch/bin/wrong-ldflag-pre" '-X main.version=pre-1.2.3'
+refuse_ldflag wrong-ldflag-rel "$scratch/bin/wrong-ldflag-rel" '-X main.version=release_1.2.3'
+refuse_ldflag stuffed-buildtime "$scratch/bin/stuffed-buildtime" 'buildTime=1.2.3 with version=9.9.9'
+refuse_ldflag stuffed-gitcommit "$scratch/bin/stuffed-gitcommit" 'gitCommit=1.2.3 with version=9.9.9'
+refuse_ldflag stuffed-gitcommit-dash "$scratch/bin/stuffed-gitcommit-dash" 'gitCommit=-1.2.3 with version=9.9.9'
+refuse_ldflag double-version "$scratch/bin/double-version" 'two delimited 1.2.3 labels'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '48 <= left <= 57 or 65 <= left <= 90 or 97 <= left <= 122'
+new = '48 <= left <= 57 or 97 <= left <= 122'
+if old not in text:
+    raise SystemExit('live script is missing the uppercase left boundary')
+mut = text.replace(old, new, 1)
+if '65 <= left <= 90' in mut.split('def go_string', 1)[0]:
+    raise SystemExit('uppercase mutant still forbids A-Z')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'uppercase left-boundary mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/wrong-ldflag-X" >/dev/null 2>"$scratch/mut-X.err"; then
+	fail "dropping uppercase left must accept X1.2.3 (log: $(cat "$scratch/mut-X.err"))"
+fi
+restore_draft
+pass 'reverting the uppercase left boundary accepts X1.2.3'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''        right_ok = i + n == len(data) or data[i + n] == 0
+        if left_ok and right_ok:
+            hits += 1
+'''
+new = '''        right_ok = True
+        if left_ok and right_ok:
+            hits += 1
+'''
+if old not in text:
+    raise SystemExit('live script is missing the version right-NUL check')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('right-NUL mutant still requires NUL after the version')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'right-NUL mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/wrong-ldflag-130" >/dev/null 2>"$scratch/mut-130.err"; then
+	fail "dropping right-NUL must accept 1.2.30 (log: $(cat "$scratch/mut-130.err"))"
+fi
+restore_draft
+pass 'reverting the right-NUL boundary accepts 1.2.30'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '\n            or left in (45, 95)'
+new = ''
+if old not in text:
+    raise SystemExit('live script is missing the hyphen/underscore left boundary')
+mut = text.replace(old, new, 1)
+if 'left in (45, 95)' in mut:
+    raise SystemExit('hyphen mutant still forbids - and _')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'hyphen/underscore mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/wrong-ldflag-pre" >/dev/null 2>"$scratch/mut-pre.err"; then
+	fail "dropping hyphen/underscore left must accept pre-1.2.3 (log: $(cat "$scratch/mut-pre.err"))"
+fi
+if ! "$fixture_script" v1.2.3 "$scratch/wrong-ldflag-rel" >/dev/null 2>"$scratch/mut-rel.err"; then
+	fail "dropping hyphen/underscore left must accept release_1.2.3 (log: $(cat "$scratch/mut-rel.err"))"
+fi
+restore_draft
+pass 'reverting hyphen/underscore left accepts pre-1.2.3 and release_1.2.3'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if hits != 1:
+    raise SystemExit("error: archive version label is not unique")
+'''
+new = '''if False and hits != 1:
+    raise SystemExit("error: archive version label is not unique")
+'''
+if old not in text:
+    raise SystemExit('live script is missing the unique version-label check')
+mut = text.replace(old, new, 1)
+if 'if hits != 1:' in mut:
+    raise SystemExit('unique-label mutant still requires exactly one match')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'unique-label mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/double-version" >/dev/null 2>"$scratch/mut-double.err"; then
+	fail "dropping unique-label must accept two 1.2.3 strings (log: $(cat "$scratch/mut-double.err"))"
+fi
+restore_draft
+pass 'reverting unique-label accepts two delimited 1.2.3 strings'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if not has_rfc3339_build_time():
+    raise SystemExit("error: archive buildTime is not RFC3339")
+'''
+new = '''if False and not has_rfc3339_build_time():
+    raise SystemExit("error: archive buildTime is not RFC3339")
+'''
+if old not in text:
+    raise SystemExit('live script is missing the RFC3339 buildTime check')
+mut = text.replace(old, new, 1)
+if 'if not has_rfc3339_build_time():' in mut:
+    raise SystemExit('RFC3339 mutant still requires buildTime')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'RFC3339 mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/stuffed-buildtime" >/dev/null 2>"$scratch/mut-bt-rfc.err"; then
+	fail "dropping RFC3339 must accept buildTime=1.2.3 (log: $(cat "$scratch/mut-bt-rfc.err"))"
+fi
+restore_draft
+pass 'reverting RFC3339 buildTime accepts buildTime=1.2.3'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if not go_string(full_commit):
+    raise SystemExit("error: archive gitCommit is not the tagged commit")
+'''
+new = '''if False and not go_string(full_commit):
+    raise SystemExit("error: archive gitCommit is not the tagged commit")
+'''
+if old not in text:
+    raise SystemExit('live script is missing the gitCommit 40-hex check')
+mut = text.replace(old, new, 1)
+if 'if not go_string(full_commit):' in mut:
+    raise SystemExit('gitCommit mutant still requires the tagged commit')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'gitCommit mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/stuffed-gitcommit" >/dev/null 2>"$scratch/mut-gc.err"; then
+	fail "dropping gitCommit 40-hex must accept gitCommit=1.2.3 (log: $(cat "$scratch/mut-gc.err"))"
+fi
+restore_draft
+pass 'reverting gitCommit 40-hex accepts gitCommit=1.2.3'
+
 forged_bt="$scratch/forged-buildtime"
 pack_from "$scratch/bin/forged-buildtime" "$forged_bt"
 sign_dir "$forged_bt"
@@ -877,7 +1094,11 @@ if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '''if mod != tag:
+old = '''if not has_rfc3339_build_time():
+    raise SystemExit("error: archive buildTime is not RFC3339")
+if not go_string(full_commit):
+    raise SystemExit("error: archive gitCommit is not the tagged commit")
+if mod != tag:
     raise SystemExit("error: archive mod version is not " + tag)
 if vcs_revision != full_commit:
     raise SystemExit("error: archive vcs.revision is not the tagged commit")
@@ -888,7 +1109,7 @@ new = '''if False:
     raise SystemExit("error: archive bind skipped")
 '''
 if old not in text:
-    raise SystemExit('live script does not require mod and vcs.revision')
+    raise SystemExit('live script does not require RFC3339, gitCommit, mod and vcs.revision')
 mut = text.replace(old, new, 1)
 if 'if vcs_revision != full_commit:' in mut:
     raise SystemExit('buildTime mutant still requires vcs.revision')
@@ -905,7 +1126,7 @@ restore_draft
 pass 'reverting vcs.revision to a delimited-hash fallback accepts buildTime'
 
 nongo="$scratch/nongo"
-python3 - "$nongo" "$root/scripts/install-shellsentry.sh" <<'PY'
+python3 - "$nongo" "$root/scripts/install-shellsentry.sh" "$full" <<'PY'
 import hashlib
 import io
 import pathlib
@@ -916,7 +1137,7 @@ import zipfile
 dest = pathlib.Path(sys.argv[1])
 dest.mkdir(parents=True)
 installer_src = pathlib.Path(sys.argv[2])
-payload = b"#!/bin/sh\n# not a Go binary\nversion 1.2.3\x00"
+payload = b"#!/bin/sh\n# not a Go binary\n\x001.2.3\x002020-01-02T03:04:05Z\x00" + sys.argv[3].encode("ascii") + b"\x00"
 for name in (
     "shellsentry_linux_amd64.tar.gz",
     "shellsentry_linux_arm64.tar.gz",
