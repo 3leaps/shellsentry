@@ -208,9 +208,11 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
   title, and body to match the signed tag and tagged notes, requires an
   exact draft asset set, checks both manifests and their minisign/PGP
   signatures against pins in the tagged commit, binds each archive so
-  `go version -m` `mod` equals the tag, re-downloads the draft, `cmp`s
-  every asset, re-verifies the tag immediately before promotion, then
-  runs `gh release edit --draft=false`. It targets `3leaps/shellsentry`
+  `go version -m` `mod` equals the tag and the `main.version` Go string
+  is a delimited match for the tag without the leading v, re-downloads
+  the draft, `cmp`s every asset, re-verifies the tag immediately before
+  promotion, then runs `gh release edit --draft=false`. It targets
+  `3leaps/shellsentry`
   only. It refuses GitHub Actions, an edited body, and a non-draft
   release. Do not run `gh release edit --draft=false` by hand.
 

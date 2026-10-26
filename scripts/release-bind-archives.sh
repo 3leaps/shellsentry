@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Bind staged archives to the signed tag. vcs.revision must equal the tagged
-# commit, vcs.modified must be false, and go version -m `mod` must equal the
-# tag exactly (Go 1.24+ records vX.Y.Z for a clean tagged build).
+# commit, vcs.modified must be false, go version -m `mod` must equal the tag
+# exactly (Go 1.24+ records vX.Y.Z for a clean tagged build), and the
+# main.version Go string must be a delimited match for the tag without the
+# leading v (left not alphanumeric, right NUL) so 9.9.9, x1.2.3, 11.2.3,
+# and the default "dev" do not satisfy 1.2.3.
 # Usage: release-bind-archives.sh vX.Y.Z [source_dir]
 set -euo pipefail
 die() {
@@ -12,6 +15,7 @@ tag="${1:-}"
 src="${2:-dist/release}"
 [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
 	die 'usage: release-bind-archives.sh vX.Y.Z [source_dir]'
+version="${tag#v}"
 command -v go >/dev/null 2>&1 || die 'go is required to bind archives to the signed tag'
 command -v python3 >/dev/null 2>&1 || die 'python3 is required to bind archives to the signed tag'
 [[ -d "$src" && ! -L "$src" ]] || die "source dir not found: $src"
@@ -61,10 +65,36 @@ PY
 	bin="$dest/shellsentry"
 	[[ -s "$bin" ]] || die "no shellsentry binary in $archive"
 	info="$(go version -m "$bin" 2>/dev/null)" || die "$archive is not a Go binary"
-	if ! python3 - "$tag" "$commit" "$info" <<'PY'
+	if ! python3 - "$bin" "$version" "$tag" "$commit" "$info" <<'PY'
+from pathlib import Path
 import sys
 
-tag, full_commit, info = sys.argv[1], sys.argv[2], sys.argv[3]
+data = Path(sys.argv[1]).read_bytes()
+version, tag, full_commit, info = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+
+
+def delimited_version(value: str) -> bool:
+    # -X main.version is a Go string: right boundary is NUL. Left must not be
+    # alphanumeric, so 11.2.3 and x1.2.3 do not satisfy tag 1.2.3. The
+    # buildinfo module version is v1.2.3 (left 'v', right TAB) and is not
+    # this match; a tagged build with the default "dev" ldflag therefore fails.
+    needle = value.encode("ascii")
+    n = len(needle)
+    start = 0
+    while True:
+        i = data.find(needle, start)
+        if i < 0:
+            return False
+        left = data[i - 1] if i else 0
+        left_ok = i == 0 or not (
+            48 <= left <= 57 or 65 <= left <= 90 or 97 <= left <= 122
+        )
+        right_ok = i + n == len(data) or data[i + n] == 0
+        if left_ok and right_ok:
+            return True
+        start = i + 1
+
+
 mod = None
 vcs_revision = None
 vcs_modified = None
@@ -78,6 +108,8 @@ for raw in info.splitlines():
     elif line.startswith("build\tvcs.modified="):
         vcs_modified = line.split("=", 1)[1]
 
+if not delimited_version(version):
+    raise SystemExit("error: archive is not bound to tag version " + version)
 if mod != tag:
     raise SystemExit("error: archive mod version is not " + tag)
 if vcs_revision != full_commit:
@@ -86,7 +118,7 @@ if vcs_modified != "false":
     raise SystemExit("error: archive vcs.modified is not false")
 PY
 	then
-		die "archive $archive is not bound to signed tag $tag (mod $tag commit $commit)"
+		die "archive $archive is not bound to signed tag $tag (mod $tag version $version commit $commit)"
 	fi
 }
 for archive in \
@@ -100,4 +132,4 @@ do
 		die "missing release file: $archive"
 	bind_archive "$archive"
 done
-echo "[ok] archives bound to $tag (mod $tag commit $commit)"
+echo "[ok] archives bound to $tag (mod $tag version $version commit $commit)"
