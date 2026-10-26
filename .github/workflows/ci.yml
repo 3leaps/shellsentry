@@ -9,6 +9,10 @@ name: CI
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 env:
   GITHUB_TOKEN: ${{ github.token }}
   GH_TOKEN: ${{ github.token }}
@@ -251,7 +255,6 @@ jobs:
           go-version: '1.26.10'
 
       - name: Assert native host
-        shell: bash
         run: |
           set -euo pipefail
           test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "windows/amd64"
@@ -307,6 +310,13 @@ jobs:
           go test ./...
           make build
 
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Package Windows zip
+        run: ./scripts/package-windows-zip.sh
+
   windows-dogfood-arm64:
     name: Windows dogfood (arm64)
     runs-on: windows-latest-arm64-s
@@ -318,7 +328,6 @@ jobs:
           go-version: '1.26.10'
 
       - name: Assert native host
-        shell: bash
         run: |
           set -euo pipefail
           test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "windows/arm64"
@@ -384,3 +393,10 @@ jobs:
           export PATH="$PWD/bin:$PATH"
           go test ./...
           make build
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Package Windows zip
+        run: ./scripts/package-windows-zip.sh

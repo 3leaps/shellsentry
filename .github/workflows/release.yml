@@ -67,7 +67,6 @@ jobs:
           ./scripts/release-verify-committed-anchors.sh
 
   build:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: verify-anchors
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -112,13 +111,17 @@ jobs:
         with:
           go-version: '1.26.10'
 
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+
       - name: Assert native host
         run: |
           set -euo pipefail
           host="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"
           want="${{ matrix.goos }}/${{ matrix.goarch }}"
-          test "$host" = "$want"
           echo "runner host $host matches $want"
+          test "$host" = "$want"
 
       - name: License check
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
@@ -142,21 +145,16 @@ jobs:
       - name: Package artifact
         run: |
           set -euo pipefail
-          ASSET="shellsentry_${{ matrix.goos }}_${{ matrix.goarch }}"
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            ARCHIVE="${ASSET}.zip"
-            (cd bin && mv "${ASSET}.exe" "shellsentry.exe")
-            py=python3
-            command -v python3 >/dev/null 2>&1 || py=python
-            "$py" -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); z.write("bin/shellsentry.exe","shellsentry.exe")' "${ARCHIVE}"
-            (cd bin && mv "shellsentry.exe" "${ASSET}.exe")
+            ./scripts/package-windows-zip.sh "${{ matrix.goos }}" "${{ matrix.goarch }}"
           else
+            ASSET="shellsentry_${{ matrix.goos }}_${{ matrix.goarch }}"
             ARCHIVE="${ASSET}.tar.gz"
             (cd bin && mv "${ASSET}" shellsentry)
             tar czf "${ARCHIVE}" -C bin shellsentry
             (cd bin && mv shellsentry "${ASSET}")
+            echo "ASSET_FILE=${ARCHIVE}" >> "$GITHUB_ENV"
           fi
-          echo "ASSET_FILE=${ARCHIVE}" >> "$GITHUB_ENV"
 
       - name: Upload packaged archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

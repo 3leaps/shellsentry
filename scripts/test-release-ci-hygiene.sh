@@ -271,42 +271,12 @@ grep -q 'before verifying anchors' "$scratch/order-mut.err" ||
     fail "install-order mutant refusal (log: $(cat "$scratch/order-mut.err"))"
 pass "linux amd64 Decernor install must precede committed-anchor verification"
 
-python3 - "$WF_DIR/ci.yml" <<'PY' || fail "ci.yml runner pins are missing"
-from pathlib import Path
-import re
-import sys
-
-text = Path(sys.argv[1]).read_text()
-floating = re.compile(
-    r"(?m)^\s+runs-on:\s*(ubuntu-latest|macos-latest|windows-latest)\s*$"
-)
-if floating.search(text):
-    raise SystemExit("ci.yml must not use ubuntu-latest, macos-latest, or windows-latest")
-required = {
-    "test": ("ubuntu-24.04", "linux/amd64"),
-    "test-linux-arm64": ("ubuntu-latest-arm64-s", "linux/arm64"),
-    "macos-bootstrap-smoke": ("macos-15", "darwin/arm64"),
-    "windows-dogfood-x64": ("windows-2022", "windows/amd64"),
-    "windows-dogfood-arm64": ("windows-latest-arm64-s", "windows/arm64"),
+check_ci() {
+    python3 "$ROOT/scripts/workflow_native_guards.py" --ci "$1"
 }
-m = re.search(r"(?m)^jobs:\n", text)
-if not m:
-    raise SystemExit("ci.yml has no jobs:")
-parts = re.split(r"(?m)^  ([A-Za-z0-9_-]+):\n", text[m.end():])
-jobs = {}
-it = iter(parts[1:])
-for name in it:
-    jobs[name] = next(it)
-for name, (runner, host) in required.items():
-    body = jobs.get(name)
-    if body is None:
-        raise SystemExit(f"missing job {name}")
-    if not re.search(rf"(?m)^    runs-on:\s*{re.escape(runner)}\s*$", body):
-        raise SystemExit(f"{name} must run on {runner}")
-    if f'= "{host}"' not in body:
-        raise SystemExit(f"{name} must assert native host {host}")
-PY
-pass "ci.yml pins five native runners and asserts GOHOSTOS/GOHOSTARCH"
+
+check_ci "$WF_DIR/ci.yml" >/dev/null || fail "ci.yml native guards rejected the live workflow"
+pass "ci.yml pins five native runners, refuses skippable build steps, and packs Windows zips"
 
 python3 - "$WF_DIR/ci.yml" "$scratch/ci-ubuntu-latest.yml" <<'PY' || fail "ubuntu-latest mutant was not distinguished"
 from pathlib import Path
@@ -321,16 +291,7 @@ if old in mut:
     raise SystemExit("ubuntu-latest mutant still has ubuntu-24.04")
 dest.write_text(mut)
 PY
-if python3 - "$scratch/ci-ubuntu-latest.yml" <<'PY' >/dev/null 2>"$scratch/ci-ubuntu-latest.err"
-from pathlib import Path
-import re, sys
-text = Path(sys.argv[1]).read_text()
-floating = re.compile(r"(?m)^\s+runs-on:\s*(ubuntu-latest|macos-latest|windows-latest)\s*$")
-if floating.search(text):
-    raise SystemExit("ci.yml must not use ubuntu-latest, macos-latest, or windows-latest")
-print("ok")
-PY
-then
+if check_ci "$scratch/ci-ubuntu-latest.yml" >/dev/null 2>"$scratch/ci-ubuntu-latest.err"; then
 	fail "hygiene accepted ci.yml after changing linux amd64 to ubuntu-latest"
 fi
 grep -q 'ubuntu-latest' "$scratch/ci-ubuntu-latest.err" ||
@@ -350,16 +311,7 @@ if old in mut:
     raise SystemExit("macos-latest mutant still has macos-15")
 dest.write_text(mut)
 PY
-if python3 - "$scratch/ci-macos-latest.yml" <<'PY' >/dev/null 2>"$scratch/ci-macos-latest.err"
-from pathlib import Path
-import re, sys
-text = Path(sys.argv[1]).read_text()
-floating = re.compile(r"(?m)^\s+runs-on:\s*(ubuntu-latest|macos-latest|windows-latest)\s*$")
-if floating.search(text):
-    raise SystemExit("ci.yml must not use ubuntu-latest, macos-latest, or windows-latest")
-print("ok")
-PY
-then
+if check_ci "$scratch/ci-macos-latest.yml" >/dev/null 2>"$scratch/ci-macos-latest.err"; then
 	fail "hygiene accepted ci.yml after changing macos to macos-latest"
 fi
 grep -q 'macos-latest' "$scratch/ci-macos-latest.err" ||
@@ -379,16 +331,7 @@ if old in mut:
     raise SystemExit("windows-latest mutant still has windows-2022")
 dest.write_text(mut)
 PY
-if python3 - "$scratch/ci-windows-latest.yml" <<'PY' >/dev/null 2>"$scratch/ci-windows-latest.err"
-from pathlib import Path
-import re, sys
-text = Path(sys.argv[1]).read_text()
-floating = re.compile(r"(?m)^\s+runs-on:\s*(ubuntu-latest|macos-latest|windows-latest)\s*$")
-if floating.search(text):
-    raise SystemExit("ci.yml must not use ubuntu-latest, macos-latest, or windows-latest")
-print("ok")
-PY
-then
+if check_ci "$scratch/ci-windows-latest.yml" >/dev/null 2>"$scratch/ci-windows-latest.err"; then
 	fail "hygiene accepted ci.yml after changing windows amd64 to windows-latest"
 fi
 grep -q 'windows-latest' "$scratch/ci-windows-latest.err" ||
@@ -408,23 +351,324 @@ if old in mut:
     raise SystemExit("host-assert mutant still requires darwin/arm64")
 dest.write_text(mut)
 PY
-if python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-host.yml" <<'PY' >/dev/null 2>"$scratch/ci-no-host.err"
-from pathlib import Path
-import re, sys
-text = Path(sys.argv[2]).read_text()
-m = re.search(r"(?m)^jobs:\n", text)
-parts = re.split(r"(?m)^  ([A-Za-z0-9_-]+):\n", text[m.end():])
-jobs = {}
-it = iter(parts[1:])
-for name in it:
-    jobs[name] = next(it)
-if '= "darwin/arm64"' not in jobs["macos-bootstrap-smoke"]:
-    raise SystemExit("macos-bootstrap-smoke must assert native host darwin/arm64")
-print("ok")
-PY
-then
+if check_ci "$scratch/ci-no-host.yml" >/dev/null 2>"$scratch/ci-no-host.err"; then
 	fail "hygiene accepted ci.yml after dropping the macos host assert"
 fi
 grep -q 'darwin/arm64' "$scratch/ci-no-host.err" ||
 	fail "host-assert mutant refusal (log: $(cat "$scratch/ci-no-host.err"))"
 pass "dropping the macos native host assert fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-host-if-false.yml" <<'PY' || fail "host if: false mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "      - name: Assert native host\n"
+new = "      - name: Assert native host\n        if: false\n"
+if old not in text:
+    raise SystemExit("live ci.yml is missing Assert native host")
+mut = text.replace(old, new, 1)
+if "        if: false\n" not in mut:
+    raise SystemExit("mutant did not set if: false on the host check")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-host-if-false.yml" >/dev/null 2>"$scratch/ci-host-if-false.err"; then
+	fail "hygiene accepted ci.yml after setting if: false on the host check"
+fi
+grep -q 'must not set if:' "$scratch/ci-host-if-false.err" ||
+	fail "host if: false mutant refusal (log: $(cat "$scratch/ci-host-if-false.err"))"
+pass "setting if: false on the host check fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-host-or-true.yml" <<'PY' || fail "host || true mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = '          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "linux/amd64"'
+new = old + " || true"
+if old not in text:
+    raise SystemExit("live ci.yml is missing the linux amd64 host test")
+mut = text.replace(old, new, 1)
+if old + "\n" in mut:
+    raise SystemExit("mutant still has the live linux amd64 host test")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-host-or-true.yml" >/dev/null 2>"$scratch/ci-host-or-true.err"; then
+	fail "hygiene accepted ci.yml after appending || true to the host check"
+fi
+grep -q '|| true' "$scratch/ci-host-or-true.err" ||
+	fail "host || true mutant refusal (log: $(cat "$scratch/ci-host-or-true.err"))"
+pass "appending || true to the host check fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-host-if-wrap.yml" <<'PY' || fail "host if-false wrap mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+live = '          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "linux/amd64"'
+wrapped = (
+    "          if false; then\n"
+    '          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "linux/amd64"\n'
+    "          fi"
+)
+if live not in text:
+    raise SystemExit("live ci.yml is missing the linux amd64 host test")
+mut = text.replace(live, wrapped, 1)
+if wrapped not in mut:
+    raise SystemExit("mutant did not wrap the host check in if false")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-host-if-wrap.yml" >/dev/null 2>"$scratch/ci-host-if-wrap.err"; then
+	fail "hygiene accepted ci.yml after wrapping the host check in if false"
+fi
+grep -q 'if false' "$scratch/ci-host-if-wrap.err" ||
+	fail "host if-false wrap mutant refusal (log: $(cat "$scratch/ci-host-if-wrap.err"))"
+pass "wrapping the host check in if false fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-host-continue.yml" <<'PY' || fail "host continue-on-error mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "      - name: Assert native host\n"
+new = "      - name: Assert native host\n        continue-on-error: true\n"
+if old not in text:
+    raise SystemExit("live ci.yml is missing Assert native host")
+mut = text.replace(old, new, 1)
+if "continue-on-error: true" not in mut.split("      - name: Assert native host\n", 1)[1][:80]:
+    raise SystemExit("mutant did not set continue-on-error on the host check")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-host-continue.yml" >/dev/null 2>"$scratch/ci-host-continue.err"; then
+	fail "hygiene accepted ci.yml after setting continue-on-error on the host check"
+fi
+grep -q 'continue-on-error' "$scratch/ci-host-continue.err" ||
+	fail "host continue-on-error mutant refusal (log: $(cat "$scratch/ci-host-continue.err"))"
+pass "setting continue-on-error on the host check fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-job-if.yml" <<'PY' || fail "job-level if: mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "  test:\n    name: Linux quality (amd64)\n    runs-on: ubuntu-24.04\n"
+new = "  test:\n    if: false\n    name: Linux quality (amd64)\n    runs-on: ubuntu-24.04\n"
+if old not in text:
+    raise SystemExit("live ci.yml is missing the linux amd64 job header")
+mut = text.replace(old, new, 1)
+if "  test:\n    if: false\n" not in mut:
+    raise SystemExit("mutant did not set job-level if: false")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-job-if.yml" >/dev/null 2>"$scratch/ci-job-if.err"; then
+	fail "hygiene accepted ci.yml after setting job-level if: on linux amd64"
+fi
+grep -q 'job-level if:' "$scratch/ci-job-if.err" ||
+	fail "job-level if: mutant refusal (log: $(cat "$scratch/ci-job-if.err"))"
+pass "setting job-level if: on a platform build job fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-zip.yml" <<'PY' || fail "windows zip mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+mut = text.replace("./scripts/package-windows-zip.sh", "python -c pass")
+if "package-windows-zip.sh" in mut:
+    raise SystemExit("mutant still calls package-windows-zip.sh")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-no-zip.yml" >/dev/null 2>"$scratch/ci-no-zip.err"; then
+	fail "hygiene accepted ci.yml after dropping package-windows-zip.sh"
+fi
+grep -q 'package-windows-zip.sh' "$scratch/ci-no-zip.err" ||
+	fail "windows zip mutant refusal (log: $(cat "$scratch/ci-no-zip.err"))"
+pass "dropping package-windows-zip.sh from Windows CI fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-setup-python.yml" <<'PY' || fail "setup-python mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+mut = text.replace("actions/setup-python@", "actions/setup-go@")
+if "actions/setup-python@" in mut:
+    raise SystemExit("mutant still pins setup-python")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-no-setup-python.yml" >/dev/null 2>"$scratch/ci-no-setup-python.err"; then
+	fail "hygiene accepted ci.yml after dropping setup-python"
+fi
+grep -q 'setup-python' "$scratch/ci-no-setup-python.err" ||
+	fail "setup-python mutant refusal (log: $(cat "$scratch/ci-no-setup-python.err"))"
+pass "dropping setup-python from Windows CI fails this check"
+
+python3 - "$ROOT/scripts/package-windows-zip.sh" "$scratch/zip-no-windowsapps.sh" <<'PY' || fail "WindowsApps script mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+mut = text.replace("WindowsApps", "System32")
+if "WindowsApps" in mut:
+    raise SystemExit("mutant still mentions WindowsApps")
+dest.write_text(mut)
+PY
+if python3 - "$ROOT/scripts" "$scratch/zip-no-windowsapps.sh" <<'PY' >/dev/null 2>"$scratch/zip-no-windowsapps.err"
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from workflow_native_guards import validate_windows_zip_script
+fails = validate_windows_zip_script(Path(sys.argv[2]).read_text())
+if fails:
+    print("; ".join(fails), file=sys.stderr)
+    raise SystemExit(1)
+print("ok")
+PY
+then
+	fail "hygiene accepted package-windows-zip.sh after dropping the WindowsApps refusal"
+fi
+grep -q 'Windows Store python stub' "$scratch/zip-no-windowsapps.err" ||
+	fail "WindowsApps mutant refusal (log: $(cat "$scratch/zip-no-windowsapps.err"))"
+pass "dropping the Windows Store python stub refusal from package-windows-zip.sh fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-freshness-rename.yml" <<'PY' || fail "freshness rename mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "      - name: sfetch pin freshness (informational soft-warn only)"
+new = "      - name: sfetch pin freshness"
+if old not in text:
+    raise SystemExit("live ci.yml is missing the named sfetch pin-freshness exemption")
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit("mutant still has the exempt freshness step name")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-freshness-rename.yml" >/dev/null 2>"$scratch/ci-freshness-rename.err"; then
+	fail "hygiene accepted ci.yml after renaming the sfetch pin-freshness exemption"
+fi
+grep -q 'continue-on-error' "$scratch/ci-freshness-rename.err" ||
+	fail "freshness rename mutant refusal (log: $(cat "$scratch/ci-freshness-rename.err"))"
+pass "continue-on-error is refused unless the sfetch pin-freshness step keeps its name"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-freshness-swap.yml" <<'PY' || fail "freshness swap mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+real = (
+    "      - name: sfetch pin freshness (informational soft-warn only)\n"
+    "        run: make check-sfetch-pin-freshness\n"
+    "        continue-on-error: true\n"
+)
+boot = (
+    "      - name: Consumer bootstrap negative controls\n"
+    "        run: |\n"
+    '          export PATH="$PWD/bin:$PATH"\n'
+    "          make test-bootstrap-negative-controls\n"
+)
+swapped = (
+    "      - name: sfetch pin freshness (informational soft-warn only)\n"
+    "        continue-on-error: true\n"
+    "        run: |\n"
+    '          export PATH="$PWD/bin:$PATH"\n'
+    "          make test-bootstrap-negative-controls\n"
+)
+if real not in text or boot not in text:
+    raise SystemExit("live ci.yml is missing freshness or bootstrap steps")
+mut = text.replace(real, "", 1).replace(boot, swapped, 1)
+if real in mut:
+    raise SystemExit("swap mutant still has the real freshness run")
+if mut.count("sfetch pin freshness (informational soft-warn only)") != 1:
+    raise SystemExit("swap mutant must keep exactly one freshness name")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-freshness-swap.yml" >/dev/null 2>"$scratch/ci-freshness-swap.err"; then
+	fail "hygiene accepted ci.yml after swapping the freshness name onto another step"
+fi
+grep -q 'must be exactly make check-sfetch-pin-freshness' "$scratch/ci-freshness-swap.err" ||
+	fail "freshness swap mutant refusal (log: $(cat "$scratch/ci-freshness-swap.err"))"
+pass "renaming another step to the freshness exemption fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-freshness-append.yml" <<'PY' || fail "freshness append mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "        run: make check-sfetch-pin-freshness"
+new = "        run: make test && make check-sfetch-pin-freshness"
+if old not in text:
+    raise SystemExit("live ci.yml is missing the exact freshness run")
+mut = text.replace(old, new, 1)
+if old + "\n" in mut:
+    raise SystemExit("append mutant still has the exact freshness run")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-freshness-append.yml" >/dev/null 2>"$scratch/ci-freshness-append.err"; then
+	fail "hygiene accepted ci.yml after appending a command to the freshness run"
+fi
+grep -q 'must be exactly make check-sfetch-pin-freshness' "$scratch/ci-freshness-append.err" ||
+	fail "freshness append mutant refusal (log: $(cat "$scratch/ci-freshness-append.err"))"
+pass "appending a command to the freshness run fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-host-exit-0.yml" <<'PY' || fail "host exit 0 mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = '          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "linux/amd64"'
+new = old + "\n          exit 0"
+if old not in text:
+    raise SystemExit("live ci.yml is missing the linux amd64 host test")
+mut = text.replace(old, new, 1)
+if "exit 0" not in mut.split("Assert native host", 1)[1].split("Install system tools", 1)[0]:
+    raise SystemExit("mutant did not append exit 0 to the host check")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-host-exit-0.yml" >/dev/null 2>"$scratch/ci-host-exit-0.err"; then
+	fail "hygiene accepted ci.yml after appending exit 0 to the host check"
+fi
+grep -q 'must not exit 0' "$scratch/ci-host-exit-0.err" ||
+	fail "host exit 0 mutant refusal (log: $(cat "$scratch/ci-host-exit-0.err"))"
+pass "appending exit 0 to the host check fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-host-shell.yml" <<'PY' || fail "host shell mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "      - name: Assert native host\n        run: |"
+new = "      - name: Assert native host\n        shell: bash {0}\n        run: |"
+if old not in text:
+    raise SystemExit("live ci.yml is missing Assert native host")
+mut = text.replace(old, new, 1)
+if "shell: bash {0}" not in mut:
+    raise SystemExit("mutant did not set a custom shell: on the host check")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-host-shell.yml" >/dev/null 2>"$scratch/ci-host-shell.err"; then
+	fail "hygiene accepted ci.yml after setting a custom shell: on the host check"
+fi
+grep -q 'custom shell:' "$scratch/ci-host-shell.err" ||
+	fail "host shell mutant refusal (log: $(cat "$scratch/ci-host-shell.err"))"
+pass "setting a custom shell: on the host check fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-quality-or-colon.yml" <<'PY' || fail "|| : mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "          make prepush"
+new = "          make prepush || :"
+if old not in text:
+    raise SystemExit("live ci.yml is missing make prepush")
+mut = text.replace(old, new, 1)
+if old + "\n" in mut:
+    raise SystemExit("mutant still has the live make prepush line")
+dest.write_text(mut)
+PY
+if check_ci "$scratch/ci-quality-or-colon.yml" >/dev/null 2>"$scratch/ci-quality-or-colon.err"; then
+	fail "hygiene accepted ci.yml after appending || : to make prepush"
+fi
+grep -q '|| :' "$scratch/ci-quality-or-colon.err" ||
+	fail "|| : mutant refusal (log: $(cat "$scratch/ci-quality-or-colon.err"))"
+pass "appending || : to a platform-job run fails this check"
