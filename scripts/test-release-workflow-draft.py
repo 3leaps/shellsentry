@@ -8,11 +8,14 @@ maintainer machine.
 """
 
 import re
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from workflow_native_guards import FLOATING_LABEL_RE, validate_release_guards  # noqa: E402
 WRITE_PERM_RE = re.compile(r"^\s*([a-z-]+):\s*write\b", re.MULTILINE)
 WRITE_ALL_RE = re.compile(r"^\s*permissions:\s*write-all\b", re.MULTILINE)
 CONTENTS_READ_RE = re.compile(
@@ -29,9 +32,6 @@ BANNED = (
     "gh release ",
     "contents: write",
     "GITHUB_TOKEN: ${{ secrets",
-)
-FLOATING_LABEL_RE = re.compile(
-    r"(?m)^\s+(?:runs-on|runner):\s*(ubuntu-latest|macos-latest|windows-latest)\s*$"
 )
 NATIVE_CELLS = (
     ("ubuntu-24.04", "linux", "amd64"),
@@ -93,6 +93,7 @@ def validate(text: str) -> tuple[bool, str]:
         failures.append("tag workflow must install Decernor and verify committed anchors")
     elif install > verify:
         failures.append("tag workflow must install Decernor before verifying anchors")
+    failures.extend(validate_release_guards(text))
     if failures:
         return False, "; ".join(failures)
     return True, "tag workflow is read-only and builds on five native runners"
@@ -173,6 +174,91 @@ def mutate_macos_latest(text: str) -> str:
     return mut
 
 
+def mutate_build_job_if(text: str) -> str:
+    old = "  build:\n    needs: verify-anchors\n"
+    new = "  build:\n    if: startsWith(github.ref, 'refs/tags/v')\n    needs: verify-anchors\n"
+    if old not in text:
+        raise SystemExit("live workflow is missing the unguarded build job header")
+    mut = text.replace(old, new, 1)
+    if "  build:\n    if:" not in mut:
+        raise SystemExit("build-job if: mutant did not set job-level if:")
+    return mut
+
+
+def mutate_host_step_if_false(text: str) -> str:
+    old = "      - name: Assert native host\n"
+    new = "      - name: Assert native host\n        if: false\n"
+    if old not in text:
+        raise SystemExit("live workflow is missing Assert native host")
+    mut = text.replace(old, new, 1)
+    if "        if: false\n" not in mut:
+        raise SystemExit("host if: false mutant did not set if: false")
+    return mut
+
+
+def mutate_host_or_true(text: str) -> str:
+    old = '          test "$host" = "$want"'
+    new = '          test "$host" = "$want" || true'
+    if old not in text:
+        raise SystemExit("live workflow is missing the host equality test")
+    mut = text.replace(old, new, 1)
+    if old + "\n" in mut:
+        raise SystemExit("host || true mutant still has the live host test")
+    return mut
+
+
+def mutate_build_continue_on_error(text: str) -> str:
+    old = "      - name: Build\n"
+    new = "      - name: Build\n        continue-on-error: true\n"
+    if old not in text:
+        raise SystemExit("live workflow is missing the Build step")
+    mut = text.replace(old, new, 1)
+    if "continue-on-error: true" not in mut.split("      - name: Build\n", 1)[1][:80]:
+        raise SystemExit("Build continue-on-error mutant did not set continue-on-error")
+    return mut
+
+
+def mutate_license_if_false(text: str) -> str:
+    old = "        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'"
+    new = "        if: false"
+    if old not in text:
+        raise SystemExit("live workflow is missing the linux/amd64 license if:")
+    mut = text.replace(old, new, 1)
+    if old in mut:
+        raise SystemExit("license if: mutant still has the allowed predicate")
+    return mut
+
+
+def mutate_drop_setup_python(text: str) -> str:
+    old = (
+        "      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0\n"
+        "        with:\n"
+        "          python-version: '3.12'\n\n"
+    )
+    if old not in text:
+        raise SystemExit("live workflow is missing the setup-python pin")
+    mut = text.replace(old, "", 1)
+    if "actions/setup-python@" in mut:
+        raise SystemExit("setup-python mutant still pins setup-python")
+    return mut
+
+
+def mutate_drop_windowsapps_refusal(text: str) -> str:
+    old = (
+        '            case "$py" in\n'
+        '              *WindowsApps*) echo "error: Windows Store python stub at $py" >&2; exit 1 ;;\n'
+        "            esac\n"
+        '            test -s "$py"\n'
+    )
+    new = '            test -s "$py"\n'
+    if old not in text:
+        raise SystemExit("live workflow is missing the WindowsApps refusal")
+    mut = text.replace(old, new, 1)
+    if "WindowsApps" in mut:
+        raise SystemExit("WindowsApps mutant still refuses the Store stub")
+    return mut
+
+
 workflow = WORKFLOW.read_text(encoding="utf-8")
 valid, message = validate(workflow)
 if not valid:
@@ -192,6 +278,13 @@ for label, mutator in (
     ("cross-compile on ubuntu-24.04", mutate_cross_compile),
     ("native host assert dropped", mutate_drop_host_assert),
     ("macos-latest runner", mutate_macos_latest),
+    ("build job-level if:", mutate_build_job_if),
+    ("host-check if: false", mutate_host_step_if_false),
+    ("host-check || true", mutate_host_or_true),
+    ("Build continue-on-error", mutate_build_continue_on_error),
+    ("license if: false", mutate_license_if_false),
+    ("setup-python pin dropped", mutate_drop_setup_python),
+    ("WindowsApps refusal dropped", mutate_drop_windowsapps_refusal),
 ):
     fixture = mutator(workflow)
     valid, _ = validate(fixture)

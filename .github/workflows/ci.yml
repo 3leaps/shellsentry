@@ -307,6 +307,28 @@ jobs:
           go test ./...
           make build
 
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Package Windows zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          py="$(command -v python)"
+          case "$py" in
+            *WindowsApps*) echo "error: Windows Store python stub at $py" >&2; exit 1 ;;
+          esac
+          test -s "$py"
+          ASSET="shellsentry_$(go env GOOS)_$(go env GOARCH)"
+          ARCHIVE="${ASSET}.zip"
+          test -s "bin/${ASSET}.exe"
+          (cd bin && mv "${ASSET}.exe" "shellsentry.exe")
+          "$py" -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); z.write("bin/shellsentry.exe","shellsentry.exe")' "${ARCHIVE}"
+          (cd bin && mv "shellsentry.exe" "${ASSET}.exe")
+          test -s "${ARCHIVE}"
+          echo "packed ${ARCHIVE}"
+
   windows-dogfood-arm64:
     name: Windows dogfood (arm64)
     runs-on: windows-latest-arm64-s
@@ -384,3 +406,25 @@ jobs:
           export PATH="$PWD/bin:$PATH"
           go test ./...
           make build
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Package Windows zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          py="$(command -v python)"
+          case "$py" in
+            *WindowsApps*) echo "error: Windows Store python stub at $py" >&2; exit 1 ;;
+          esac
+          test -s "$py"
+          ASSET="shellsentry_$(go env GOOS)_$(go env GOARCH)"
+          ARCHIVE="${ASSET}.zip"
+          test -s "bin/${ASSET}.exe"
+          (cd bin && mv "${ASSET}.exe" "shellsentry.exe")
+          "$py" -c 'import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],"w",zipfile.ZIP_DEFLATED); z.write("bin/shellsentry.exe","shellsentry.exe")' "${ARCHIVE}"
+          (cd bin && mv "shellsentry.exe" "${ASSET}.exe")
+          test -s "${ARCHIVE}"
+          echo "packed ${ARCHIVE}"
