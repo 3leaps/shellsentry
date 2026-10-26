@@ -10,7 +10,7 @@ pass() { echo "PASS: $*"; }
 
 VERSION="$(tr -d '[:space:]' <VERSION)"
 [[ -n "$VERSION" && "$VERSION" != "dev" ]] || fail "VERSION file is ${VERSION:-empty}"
-COMMIT="$(git rev-parse --short HEAD)"
+COMMIT="$(git rev-parse HEAD)"
 [[ -n "$COMMIT" && "$COMMIT" != "unknown" ]] || fail "git commit is ${COMMIT:-empty}"
 
 GOOS="$(go env GOOS)"
