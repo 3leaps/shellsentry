@@ -6,13 +6,17 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
 
 ### Highlights
 
-- Tag-push CI only creates a draft GitHub release.
+- Tag-push CI is read-only: it verifies committed public anchors, builds five
+  native platforms, and uploads archives as artifacts. It does not create a
+  GitHub Release and does not sign.
 - `make release-tag` signs a local annotated tag from the operator GPG home
-  (smartcard / non-exportable subkeys). `make release-publish` promotes only
-  after a byte-for-byte draft check.
+  (smartcard / non-exportable subkeys). `make release-create-draft` opens the
+  draft from local packages. `make release-publish` promotes only after a
+  byte-for-byte draft check.
 - Every GitHub Actions `uses:` is a commit SHA with a version comment.
 - `gosec` is pinned to v2.29.0 and fails closed when missing or mismatched.
 - Verified bootstrap consumes sfetch v0.4.15.
+- Parser is `mvdan.cc/sh/v3` v3.14.1; staticcheck v0.8.2; govulncheck v1.9.0.
 
 ### Changed
 
@@ -21,14 +25,15 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
   verification stays on a disposable keyring.
 - Bootstrap: sfetch v0.4.15, engine and action
   `c44577261902c848119d3c89b0138becb613b158`. goneat stays v0.6.6.
+- The installer previous-key cutoff stays at v0.1.6 as a quoted literal.
+  Ambient `SHELLSENTRY_PREVKEY_MAX` cannot move it.
 
 ### Fixed
 
 - `gosec` is installed at v2.29.0 into `bin/`. `make gosec-high` fails closed
   if it is missing or if the binary on PATH does not match `GOSEC_VERSION`.
-- Release workflow: `draft: true` on every `action-gh-release` step; build is
-  `contents: read` and only uploads artifacts; a separate upload job with
-  `contents: write` attaches them to the draft.
+- Tag workflow: `contents: read` only; no GitHub Release; no signing.
+  Drafting and publishing stay on the operator machine.
 - Workflow actions, including `actions/checkout` and `actions/setup-go`, are
   40-character commit SHAs. Artifact actions are both v7.
   `scripts/test-workflow-action-pins.py` fails if a pin is reverted to a tag.
@@ -40,13 +45,24 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
   plus minisign or PGP, optionally run shellsentry on it, then execute. They
   do not pipe curl to a shell. Checksums use `sha256sum -c -` or
   `shasum -a 256 -c`, and `set -e` stops the run if a check fails.
+- Release archives bind to a unique `main.version` label, a real-date
+  `buildTime`, and the tagged `gitCommit`. Platform CI steps cannot skip
+  with `continue-on-error`, `if: false`, or `|| true`.
 
 ### Added
 
-- `make release-tag` creates a local signed annotated tag and verifies it
-  against the committed public pin. `make release-publish` re-downloads the
-  draft, byte-compares `SHA256SUMS` and every listed asset, then publishes.
-  Tagging, upload, and publish scripts refuse `GITHUB_ACTIONS`.
+- `make release-tag` creates a local signed annotated tag from
+  `SHELLSENTRY_RELEASE_TAG` and verifies it against the committed public pin.
+  `make release-create-draft` opens the GitHub draft from locally staged
+  packages. `make release-publish` re-downloads the draft, byte-compares
+  `SHA256SUMS` and every listed asset, then publishes. Tagging, upload, and
+  publish scripts refuse `GITHUB_ACTIONS`.
+- Release preflight binds `SHELLSENTRY_DECERNOR_BIN` and checks GPG and
+  minisign exports against the fingerprint anchors in the tagged commit.
+  Staged keys come from that commit. CI installs Decernor from a digest pin.
+- Pull requests and tag builds run natively on linux/amd64, linux/arm64,
+  darwin/arm64, windows/amd64, and windows/arm64. Windows archives are packed
+  with `scripts/package-windows-zip.sh` and a SHA-pinned `actions/setup-python`.
 
 ### Upgrading
 
