@@ -62,8 +62,10 @@ Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
   - CI validates VERSION file matches tag
   - The `verify-anchors` job installs digest-pinned Decernor and checks the
     committed public anchors
-  - The `build` job (`contents: read`, `ubuntu-24.04`, `needs: verify-anchors`)
-    builds unsigned archives for the five-platform matrix
+  - The `build` job (`contents: read`, `needs: verify-anchors`) builds
+    unsigned archives on five native runners (`ubuntu-24.04`,
+    `ubuntu-latest-arm64-s`, `macos-15`, `windows-2022`,
+    `windows-latest-arm64-s`); each cell asserts `GOHOSTOS`/`GOHOSTARCH`
   - `collect-packages` uploads a single `release-packages-$TAG` artifact
   - CI never creates a GitHub Release and never requests `contents: write`
   - A green tag run is a consistency signal, not release authorization

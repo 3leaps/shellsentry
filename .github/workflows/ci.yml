@@ -21,13 +21,18 @@ env:
 jobs:
   test:
     name: Linux quality (amd64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
+
+      - name: Assert native host
+        run: |
+          set -euo pipefail
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "linux/amd64"
 
       # No minisign here — verified bootstrap must not see ambient verifier.
       - name: Install system tools
@@ -136,6 +141,11 @@ jobs:
         with:
           go-version: '1.26.10'
 
+      - name: Assert native host
+        run: |
+          set -euo pipefail
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "linux/arm64"
+
       - name: Install system tools
         run: |
           sudo apt-get update && \
@@ -179,13 +189,18 @@ jobs:
 
   macos-bootstrap-smoke:
     name: macOS bootstrap smoke (Makefile path)
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
+
+      - name: Assert native host
+        run: |
+          set -euo pipefail
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "darwin/arm64"
 
       - name: Preflight no ambient sfetch/goneat when possible
         run: |
@@ -227,13 +242,19 @@ jobs:
 
   windows-dogfood-x64:
     name: Windows dogfood (x64)
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
+
+      - name: Assert native host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "windows/amd64"
 
       - name: Preflight no ambient sfetch/goneat/minisign
         shell: bash
@@ -295,6 +316,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.10'
+
+      - name: Assert native host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "windows/arm64"
 
       - name: Preflight no ambient sfetch/goneat/minisign
         shell: bash

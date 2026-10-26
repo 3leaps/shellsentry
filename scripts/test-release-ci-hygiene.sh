@@ -270,3 +270,161 @@ fi
 grep -q 'before verifying anchors' "$scratch/order-mut.err" ||
     fail "install-order mutant refusal (log: $(cat "$scratch/order-mut.err"))"
 pass "linux amd64 Decernor install must precede committed-anchor verification"
+
+python3 - "$WF_DIR/ci.yml" <<'PY' || fail "ci.yml runner pins are missing"
+from pathlib import Path
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text()
+floating = re.compile(
+    r"(?m)^\s+runs-on:\s*(ubuntu-latest|macos-latest|windows-latest)\s*$"
+)
+if floating.search(text):
+    raise SystemExit("ci.yml must not use ubuntu-latest, macos-latest, or windows-latest")
+required = {
+    "test": ("ubuntu-24.04", "linux/amd64"),
+    "test-linux-arm64": ("ubuntu-latest-arm64-s", "linux/arm64"),
+    "macos-bootstrap-smoke": ("macos-15", "darwin/arm64"),
+    "windows-dogfood-x64": ("windows-2022", "windows/amd64"),
+    "windows-dogfood-arm64": ("windows-latest-arm64-s", "windows/arm64"),
+}
+m = re.search(r"(?m)^jobs:\n", text)
+if not m:
+    raise SystemExit("ci.yml has no jobs:")
+parts = re.split(r"(?m)^  ([A-Za-z0-9_-]+):\n", text[m.end():])
+jobs = {}
+it = iter(parts[1:])
+for name in it:
+    jobs[name] = next(it)
+for name, (runner, host) in required.items():
+    body = jobs.get(name)
+    if body is None:
+        raise SystemExit(f"missing job {name}")
+    if not re.search(rf"(?m)^    runs-on:\s*{re.escape(runner)}\s*$", body):
+        raise SystemExit(f"{name} must run on {runner}")
+    if f'= "{host}"' not in body:
+        raise SystemExit(f"{name} must assert native host {host}")
+PY
+pass "ci.yml pins five native runners and asserts GOHOSTOS/GOHOSTARCH"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-ubuntu-latest.yml" <<'PY' || fail "ubuntu-latest mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "    runs-on: ubuntu-24.04"
+if old not in text:
+    raise SystemExit("live ci.yml is missing ubuntu-24.04")
+mut = text.replace(old, "    runs-on: ubuntu-latest", 1)
+if old in mut:
+    raise SystemExit("ubuntu-latest mutant still has ubuntu-24.04")
+dest.write_text(mut)
+PY
+if python3 - "$scratch/ci-ubuntu-latest.yml" <<'PY' >/dev/null 2>"$scratch/ci-ubuntu-latest.err"
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[1]).read_text()
+floating = re.compile(r"(?m)^\s+runs-on:\s*(ubuntu-latest|macos-latest|windows-latest)\s*$")
+if floating.search(text):
+    raise SystemExit("ci.yml must not use ubuntu-latest, macos-latest, or windows-latest")
+print("ok")
+PY
+then
+	fail "hygiene accepted ci.yml after changing linux amd64 to ubuntu-latest"
+fi
+grep -q 'ubuntu-latest' "$scratch/ci-ubuntu-latest.err" ||
+	fail "ubuntu-latest mutant refusal (log: $(cat "$scratch/ci-ubuntu-latest.err"))"
+pass "changing linux amd64 to ubuntu-latest fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-macos-latest.yml" <<'PY' || fail "macos-latest mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "    runs-on: macos-15"
+if old not in text:
+    raise SystemExit("live ci.yml is missing macos-15")
+mut = text.replace(old, "    runs-on: macos-latest", 1)
+if old in mut:
+    raise SystemExit("macos-latest mutant still has macos-15")
+dest.write_text(mut)
+PY
+if python3 - "$scratch/ci-macos-latest.yml" <<'PY' >/dev/null 2>"$scratch/ci-macos-latest.err"
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[1]).read_text()
+floating = re.compile(r"(?m)^\s+runs-on:\s*(ubuntu-latest|macos-latest|windows-latest)\s*$")
+if floating.search(text):
+    raise SystemExit("ci.yml must not use ubuntu-latest, macos-latest, or windows-latest")
+print("ok")
+PY
+then
+	fail "hygiene accepted ci.yml after changing macos to macos-latest"
+fi
+grep -q 'macos-latest' "$scratch/ci-macos-latest.err" ||
+	fail "macos-latest mutant refusal (log: $(cat "$scratch/ci-macos-latest.err"))"
+pass "changing macos-15 to macos-latest fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-windows-latest.yml" <<'PY' || fail "windows-latest mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "    runs-on: windows-2022"
+if old not in text:
+    raise SystemExit("live ci.yml is missing windows-2022")
+mut = text.replace(old, "    runs-on: windows-latest", 1)
+if old in mut:
+    raise SystemExit("windows-latest mutant still has windows-2022")
+dest.write_text(mut)
+PY
+if python3 - "$scratch/ci-windows-latest.yml" <<'PY' >/dev/null 2>"$scratch/ci-windows-latest.err"
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[1]).read_text()
+floating = re.compile(r"(?m)^\s+runs-on:\s*(ubuntu-latest|macos-latest|windows-latest)\s*$")
+if floating.search(text):
+    raise SystemExit("ci.yml must not use ubuntu-latest, macos-latest, or windows-latest")
+print("ok")
+PY
+then
+	fail "hygiene accepted ci.yml after changing windows amd64 to windows-latest"
+fi
+grep -q 'windows-latest' "$scratch/ci-windows-latest.err" ||
+	fail "windows-latest mutant refusal (log: $(cat "$scratch/ci-windows-latest.err"))"
+pass "changing windows-2022 to windows-latest fails this check"
+
+python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-host.yml" <<'PY' || fail "host-assert mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = '= "darwin/arm64"'
+if old not in text:
+    raise SystemExit("live ci.yml is missing the macos host assert")
+mut = text.replace(old, '= "linux/amd64"', 1)
+if old in mut:
+    raise SystemExit("host-assert mutant still requires darwin/arm64")
+dest.write_text(mut)
+PY
+if python3 - "$WF_DIR/ci.yml" "$scratch/ci-no-host.yml" <<'PY' >/dev/null 2>"$scratch/ci-no-host.err"
+from pathlib import Path
+import re, sys
+text = Path(sys.argv[2]).read_text()
+m = re.search(r"(?m)^jobs:\n", text)
+parts = re.split(r"(?m)^  ([A-Za-z0-9_-]+):\n", text[m.end():])
+jobs = {}
+it = iter(parts[1:])
+for name in it:
+    jobs[name] = next(it)
+if '= "darwin/arm64"' not in jobs["macos-bootstrap-smoke"]:
+    raise SystemExit("macos-bootstrap-smoke must assert native host darwin/arm64")
+print("ok")
+PY
+then
+	fail "hygiene accepted ci.yml after dropping the macos host assert"
+fi
+grep -q 'darwin/arm64' "$scratch/ci-no-host.err" ||
+	fail "host-assert mutant refusal (log: $(cat "$scratch/ci-no-host.err"))"
+pass "dropping the macos native host assert fails this check"
