@@ -85,6 +85,11 @@ fi
 grep -q 'tagName' "$script" || fail 'publish must check the release tagName'
 grep -q 'release title or body differs from the tagged notes' "$script" ||
 	fail 'publish must require the release title and body to equal the tagged notes'
+STRIP='title = line[2:] if line.startswith("# ") else line'
+grep -Fq "$STRIP" "$script" ||
+	fail 'publish must strip a leading "# " from the notes title'
+grep -Fq "$STRIP" "$root/scripts/release-create-draft.sh" ||
+	fail 'create-draft must strip a leading "# " identically'
 grep -q 'missing local release file' "$script" ||
 	fail 'publish must require local release files as regular files'
 grep -q 'tagged commit differs from the staged anchor' "$script" ||
@@ -164,7 +169,7 @@ cp -a "$root/internal" "$repo/"
 cp "$root/main.go" "$root/go.mod" "$root/go.sum" "$repo/"
 gpg --batch --armor --export "$primary" >"$repo/docs/security/release-signing-keys.asc"
 cp "$scratch/good.pub" "$repo/docs/security/shellsentry-minisign.pub"
-printf 'notes for v1.2.3\n' >"$repo/docs/releases/v1.2.3.md"
+printf '# shellsentry v1.2.3\n\nnotes for v1.2.3\n' >"$repo/docs/releases/v1.2.3.md"
 blob="$(python3 -c 'import base64,hashlib,pathlib,sys; print(hashlib.sha256(base64.b64decode(pathlib.Path(sys.argv[1]).read_text().splitlines()[1])).hexdigest())' "$scratch/good.pub")"
 printf 'gpg %s\nminisign %s\n' "$primary" "$blob" >"$repo/keys/expected-fingerprints.txt"
 printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$repo/keys/expected-fingerprints.ndjson"
@@ -376,11 +381,13 @@ case "$1 $2" in
 	;;
 "release view")
 	names="$(cd "$FIXTURE_DRAFT" && ls -1 | jq -R . | jq -s 'map({name: .})')"
-	body="${FIXTURE_RELEASE_BODY-notes for v1.2.3
+	body="${FIXTURE_RELEASE_BODY-# shellsentry v1.2.3
+
+notes for v1.2.3
 }"
 	jq -n --argjson a "$names" --argjson d "${FIXTURE_IS_DRAFT:-true}" \
 		--arg tag "${FIXTURE_TAG_NAME:-v1.2.3}" \
-		--arg name "${FIXTURE_RELEASE_TITLE:-notes for v1.2.3}" \
+		--arg name "${FIXTURE_RELEASE_TITLE:-shellsentry v1.2.3}" \
 		--arg body "$body" \
 		'{isDraft: $d, assets: $a, tagName: $tag, name: $name, body: $body}'
 	;;
@@ -570,6 +577,29 @@ export FIXTURE_RELEASE_TITLE='Edited Title'
 refuse 'release title or body differs from the tagged notes'
 unset FIXTURE_RELEASE_TITLE
 pass 'edited release title is refused'
+
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = 'title = line[2:] if line.startswith("# ") else line'
+new = 'title = line'
+if old not in text:
+    raise SystemExit('live publish is missing the heading strip')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('heading-strip mutant still strips')
+dest.write_text(mut)
+PY
+then
+	fail 'publish heading-strip mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+stage
+refuse 'release title or body differs from the tagged notes'
+restore_publish
+pass 'publish heading-strip mutant is distinguished'
 
 if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
 from pathlib import Path

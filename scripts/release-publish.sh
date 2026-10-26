@@ -81,7 +81,8 @@ tag, notes = sys.argv[2], sys.argv[3]
 expected = sorted(sys.argv[4:])
 if payload.get("tagName") != tag:
     raise SystemExit(4)
-title = notes.splitlines()[0] if notes.strip() else ""
+line = notes.splitlines()[0] if notes.strip() else ""
+title = line[2:] if line.startswith("# ") else line
 got_body = payload.get("body") or ""
 want_body = notes
 if got_body.endswith("\n") and not want_body.endswith("\n"):

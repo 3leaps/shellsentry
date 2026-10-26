@@ -134,7 +134,8 @@ curl -sSfLO "$BASE/SHA256SUMS.minisig"
 minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
 # PGP instead of minisign:
 # curl -sSfLO "$BASE/SHA256SUMS.asc"
-# gpg --import docs/security/release-signing-keys.asc
+# curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"
+# gpg --import shellsentry-release-signing-key.asc
 # signing subkey DAB70DD758911B26BB45A08C3B75AC591449DEBE
 # gpg --verify SHA256SUMS.asc SHA256SUMS
 if command -v sha256sum >/dev/null 2>&1; then

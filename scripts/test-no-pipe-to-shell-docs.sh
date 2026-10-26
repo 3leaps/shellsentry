@@ -209,20 +209,56 @@ pass "install blocks chain signature, checksum, and run"
 [[ ! -e configs/keys/shellsentry-minisign.pub ]] ||
     fail "configs/keys/shellsentry-minisign.pub must not exist; embed docs/security/shellsentry-minisign.pub"
 pass "duplicate configs/keys pins are absent"
-grep -q 'gpg --import docs/security/release-signing-keys.asc' README.md ||
-    fail "README gpg import must use docs/security/release-signing-keys.asc"
-if grep -n 'gpg --import configs/keys/' README.md; then
-    fail "README must not import the GPG pin from configs/keys"
+pgp_fetch_ok() {
+    local file="$1"
+    grep -q 'curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"' "$file" &&
+        grep -q 'gpg --import shellsentry-release-signing-key.asc' "$file" &&
+        ! grep -q 'gpg --import docs/security/' "$file" &&
+        ! grep -q 'gpg --import configs/keys/' "$file"
+}
+pgp_fetch_ok README.md || fail "README PGP step must fetch shellsentry-release-signing-key.asc from the release"
+pgp_fetch_ok docs/releases/v0.1.8.md ||
+    fail "v0.1.8 notes PGP step must fetch shellsentry-release-signing-key.asc from the release"
+if grep -n 'gpg --import configs/keys/' README.md docs/releases/v0.1.8.md; then
+    fail "current install docs must not import the GPG pin from configs/keys"
 fi
-pass "README gpg import uses docs/security"
-grep -q 'gpg --import docs/security/release-signing-keys.asc' docs/releases/v0.1.8.md ||
-    fail "v0.1.8 notes gpg import must use docs/security/release-signing-keys.asc"
-if grep -n 'gpg --import configs/keys/' docs/releases/v0.1.8.md; then
-    fail "v0.1.8 notes must not import the GPG pin from configs/keys"
+# v0.1.8 section of RELEASE_NOTES (before ## v0.1.7) must match the fetch recipe.
+python3 - "$ROOT/RELEASE_NOTES.md" <<'PY' || fail "RELEASE_NOTES v0.1.8 PGP step must fetch the release key asset"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+start = text.find("## v0.1.8")
+end = text.find("## v0.1.7")
+if start < 0 or end < 0 or end <= start:
+    raise SystemExit("RELEASE_NOTES.md missing v0.1.8 before v0.1.7")
+sec = text[start:end]
+if 'curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"' not in sec:
+    raise SystemExit("v0.1.8 section does not fetch the release key asset")
+if "gpg --import shellsentry-release-signing-key.asc" not in sec:
+    raise SystemExit("v0.1.8 section does not import the fetched key")
+if "gpg --import docs/security/" in sec or "gpg --import configs/keys/" in sec:
+    raise SystemExit("v0.1.8 section still imports a checkout path")
+PY
+pass "current PGP install steps fetch the release key asset"
+
+python3 - "$ROOT/docs/releases/v0.1.8.md" "$scratch/checkout-import.md" <<'PY' || fail "checkout-import mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = '''# curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"
+# gpg --import shellsentry-release-signing-key.asc'''
+new = "# gpg --import docs/security/release-signing-keys.asc"
+if old not in text:
+    raise SystemExit("live v0.1.8 notes are missing the release-asset PGP fetch")
+mut = text.replace(old, new, 1)
+if "gpg --import docs/security/" not in mut:
+    raise SystemExit("mutant did not restore a checkout import")
+dest.write_text(mut)
+PY
+if pgp_fetch_ok "$scratch/checkout-import.md"; then
+    fail "accepted v0.1.8 notes after restoring a checkout PGP import"
 fi
-if grep -n 'gpg --import configs/keys/' RELEASE_NOTES.md; then
-    fail "RELEASE_NOTES.md must not import the GPG pin from configs/keys"
-fi
-pass "current release notes gpg import uses docs/security"
+pass "checkout PGP import mutant is distinguished"
 
 echo "[ok] no pipe-to-shell install docs"

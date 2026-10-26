@@ -156,7 +156,12 @@ notes="$work/release-notes.md"
 git -C "$root" cat-file blob "$commit:docs/releases/${tag}.md" >"$notes" 2>/dev/null ||
 	die "missing release notes in $tag: docs/releases/${tag}.md"
 [[ -s "$notes" ]] || die "missing release notes in $tag: docs/releases/${tag}.md"
-title="$(python3 -c 'import pathlib,sys; t=pathlib.Path(sys.argv[1]).read_text(); print(t.splitlines()[0] if t.strip() else "")' "$notes")"
+title="$(python3 -c 'import pathlib,sys
+notes=pathlib.Path(sys.argv[1]).read_text()
+line = notes.splitlines()[0] if notes.strip() else ""
+title = line[2:] if line.startswith("# ") else line
+print(title)
+' "$notes")"
 [[ -n "$title" ]] || die "tagged notes have no title line: docs/releases/${tag}.md"
 files=()
 for want in "${expected[@]}"; do

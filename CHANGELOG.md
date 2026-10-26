@@ -35,12 +35,16 @@ Semantic Versioning.
   download the installer, verify `SHA256SUMS` plus minisign or PGP, optionally
   run shellsentry on it, then execute. Checksums use `sha256sum -c -` or
   `shasum -a 256 -c`, and `set -e` stops the run if a check fails.
-  `scripts/test-no-pipe-to-shell-docs.sh` fails if a `curl ... | bash` recipe,
-  a bare `sha256sum -c`, or an unchained installer run is restored.
+  PGP examples fetch `shellsentry-release-signing-key.asc` from the release
+  instead of importing a checkout path. `scripts/test-no-pipe-to-shell-docs.sh`
+  fails if a `curl ... | bash` recipe, a bare `sha256sum -c`, an unchained
+  installer run, or a checkout PGP import is restored.
 - **Release archives bind to the tagged version.** Packaged binaries carry a
-  unique `main.version` label, a real-date `buildTime`, and the tagged
-  `gitCommit`. The publish path refuses a draft whose version does not match
-  the tag.
+  unique delimited version label, a real-date `buildTime`, and the tagged
+  `gitCommit`. A byte scan cannot attribute those strings to a specific `-X`
+  variable, so the source is pinned by `mod`, `vcs.revision`, and
+  `vcs.modified`. The publish path refuses a draft whose version does not
+  match the tag.
 - **Installer previous-key cutoff ignores the environment.**
   `SHELLSENTRY_PREVKEY_MAX` is the quoted literal `v0.1.6`. Exporting a
   larger value before loading the installer does not make v0.1.7 verify
@@ -62,8 +66,9 @@ Semantic Versioning.
   commit, not the working tree. CI installs Decernor from a digest pin.
 - **Native five-platform CI.** Pull requests and tag builds run on
   linux/amd64, linux/arm64, darwin/arm64, windows/amd64, and windows/arm64
-  with a matching `GOHOSTOS`/`GOHOSTARCH` check. Platform steps cannot use
-  `continue-on-error`, `if: false`, or `|| true`. Windows archives are packed
+  with a matching `GOHOSTOS`/`GOHOSTARCH` check. Platform steps refuse the
+  common soft-fail forms (`continue-on-error`, `if: false`, and `|| true`).
+  Windows archives are packed
   with `scripts/package-windows-zip.sh` and a SHA-pinned `actions/setup-python`.
 
 ### Changed

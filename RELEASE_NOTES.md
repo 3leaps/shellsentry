@@ -45,9 +45,12 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
   plus minisign or PGP, optionally run shellsentry on it, then execute. They
   do not pipe curl to a shell. Checksums use `sha256sum -c -` or
   `shasum -a 256 -c`, and `set -e` stops the run if a check fails.
-- Release archives bind to a unique `main.version` label, a real-date
-  `buildTime`, and the tagged `gitCommit`. Platform CI steps cannot skip
-  with `continue-on-error`, `if: false`, or `|| true`.
+- Release archives bind to a unique delimited version label, a real-date
+  `buildTime`, and the tagged `gitCommit`. A byte scan cannot attribute
+  those strings to a specific `-X` variable, so the source is pinned by
+  `mod`, `vcs.revision`, and `vcs.modified`.
+- Platform CI steps refuse the common soft-fail forms (`continue-on-error`,
+  `if: false`, and `|| true`).
 
 ### Added
 
@@ -79,7 +82,8 @@ curl -sSfLO "$BASE/SHA256SUMS.minisig"
 minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ctSA1
 # PGP instead of minisign:
 # curl -sSfLO "$BASE/SHA256SUMS.asc"
-# gpg --import docs/security/release-signing-keys.asc
+# curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"
+# gpg --import shellsentry-release-signing-key.asc
 # signing subkey DAB70DD758911B26BB45A08C3B75AC591449DEBE
 # gpg --verify SHA256SUMS.asc SHA256SUMS
 if command -v sha256sum >/dev/null 2>&1; then
