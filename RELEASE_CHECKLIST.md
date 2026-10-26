@@ -149,9 +149,14 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
    and identity files are byte-identical to `origin/main`. Checks that
    both manifests list exactly the staged archives with matching hashes,
    verifies minisign and GPG signatures with the keys from the tagged
-   commit, binds each archive via `go version -m` (`vcs.revision` equals
-   the tagged commit, `vcs.modified` is false) plus delimited ldflag
-   version strings, and reads release notes from the tagged commit
+   commit, binds each archive via `go version -m` (`mod` equals the tag,
+   `vcs.revision` equals the tagged commit, `vcs.modified` is false)
+   plus exactly one delimited version label, one real RFC3339 UTC date,
+   and one 40-hex tagged commit. Known limit: a byte scan cannot tell
+   which `-X` variable a string belongs to, so `internal/cli` ldflags
+   (or swapped buildTime/gitCommit) can satisfy the labels while
+   `shellsentry version` reports `main.version`. Release notes come
+   from the tagged commit
    (`git cat-file blob <commit>:docs/releases/<tag>.md`), not the
    working tree. Also refuses extra files and a tag that no longer
    matches the staging anchor.
@@ -208,9 +213,12 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
   title, and body to match the signed tag and tagged notes, requires an
   exact draft asset set, checks both manifests and their minisign/PGP
   signatures against pins in the tagged commit, binds each archive so
-  `go version -m` `mod` equals the tag, the `main.version` Go string is
-  exactly one delimited match for the tag without the leading v,
-  `buildTime` is RFC3339, and `gitCommit` is the tagged commit,
+  `go version -m` `mod` equals the tag, there is exactly one delimited
+  version label for the tag without the leading v, exactly one real
+  RFC3339 UTC date, and exactly one 40-hex tagged commit. Known limit:
+  a byte scan cannot tell which `-X` variable a string belongs to, so
+  `internal/cli` ldflags (or swapped buildTime/gitCommit) can satisfy
+  the labels while `shellsentry version` reports `main.version`. Then
   re-downloads the draft, `cmp`s every asset, re-verifies the tag
   immediately before promotion, then runs `gh release edit --draft=false`.
   It targets `3leaps/shellsentry` only. It refuses GitHub Actions, an

@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Bind staged archives to the signed tag. vcs.revision must equal the tagged
-# commit, vcs.modified must be false, go version -m `mod` must equal the tag
-# exactly (Go 1.24+ records vX.Y.Z for a clean tagged build), and the
-# main.version Go string must be exactly one delimited match for the tag
-# without the leading v (left not alphanumeric, '-' or '_'; right NUL) so
-# 9.9.9, x1.2.3, X1.2.3, 11.2.3, 1.2.30, pre-1.2.3, release_1.2.3, and the
-# default "dev" do not satisfy 1.2.3. buildTime must be a delimited RFC3339
-# UTC timestamp and gitCommit a delimited 40-hex tagged commit, so stuffing
-# 1.2.3 into another -X does not count as the version label.
+# commit, vcs.modified must be false, and go version -m `mod` must equal the
+# tag exactly (Go 1.24+ records vX.Y.Z for a clean tagged build). Those pin
+# the source. A byte scan cannot tell which -X variable a string belongs to:
+# exactly one delimited match for the tag without the leading v (left not
+# alphanumeric, '-' or '_'; right NUL) so 9.9.9, x1.2.3, X1.2.3, 11.2.3,
+# 1.2.30, pre-1.2.3, release_1.2.3, and the default "dev" do not satisfy
+# 1.2.3; exactly one delimited RFC3339 UTC timestamp that is a real date;
+# and exactly one delimited 40-hex tagged commit. Known limit: -X
+# github.com/3leaps/shellsentry/internal/cli.Version=1.2.3 with
+# -X main.version=9.9.9 still binds while `shellsentry version` prints
+# 9.9.9 (self-verify and updates use that reported version). The same holds
+# for cli.BuildTime, cli.GitCommit, and swapping buildTime with gitCommit.
 # Usage: release-bind-archives.sh vX.Y.Z [source_dir]
 set -euo pipefail
 die() {
@@ -69,6 +73,7 @@ PY
 	[[ -s "$bin" ]] || die "no shellsentry binary in $archive"
 	info="$(go version -m "$bin" 2>/dev/null)" || die "$archive is not a Go binary"
 	if ! python3 - "$bin" "$version" "$tag" "$commit" "$info" <<'PY'
+from datetime import datetime
 from pathlib import Path
 import re
 import sys
@@ -78,11 +83,11 @@ version, tag, full_commit, info = sys.argv[2], sys.argv[3], sys.argv[4], sys.arg
 
 
 def version_hits(value: str) -> int:
-    # -X main.version is a Go string: right boundary is NUL. Left must not be
+    # A version label is a Go string: right boundary is NUL. Left must not be
     # alphanumeric, '-' or '_', so 11.2.3, x1.2.3, X1.2.3, pre-1.2.3 and
     # release_1.2.3 do not satisfy tag 1.2.3. Right NUL so 1.2.30 does not.
     # The buildinfo module version is v1.2.3 (left 'v', right TAB) and is not
-    # this match.
+    # this match. The scan cannot tell which -X variable owns the string.
     needle = value.encode("ascii")
     n = len(needle)
     hits = 0
@@ -118,14 +123,15 @@ def go_string(value: str) -> bool:
         start = i + 1
 
 
-def has_rfc3339_build_time() -> bool:
-    for match in re.finditer(rb"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", data):
+def delimited_matches(pattern: bytes) -> list:
+    found = []
+    for match in re.finditer(pattern, data):
         i, j = match.start(), match.end()
         left_ok = i == 0 or data[i - 1] in (0, 0x3C)
         right_ok = j == len(data) or data[j] == 0
         if left_ok and right_ok:
-            return True
-    return False
+            found.append(match.group())
+    return found
 
 
 mod = None
@@ -146,10 +152,20 @@ if hits == 0:
     raise SystemExit("error: archive is not bound to tag version " + version)
 if hits != 1:
     raise SystemExit("error: archive version label is not unique")
-if not has_rfc3339_build_time():
+rfc_hits = delimited_matches(rb"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+if not rfc_hits:
     raise SystemExit("error: archive buildTime is not RFC3339")
+if len(rfc_hits) > 1:
+    raise SystemExit("error: archive buildTime is not unique")
+if rfc_hits:
+    try:
+        datetime.strptime(rfc_hits[0].decode("ascii"), "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        raise SystemExit("error: archive buildTime is not a real date")
 if not go_string(full_commit):
     raise SystemExit("error: archive gitCommit is not the tagged commit")
+if len(delimited_matches(rb"[0-9a-f]{40}")) > 1:
+    raise SystemExit("error: archive gitCommit is not unique")
 if mod != tag:
     raise SystemExit("error: archive mod version is not " + tag)
 if vcs_revision != full_commit:

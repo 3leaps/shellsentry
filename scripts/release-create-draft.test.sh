@@ -68,10 +68,20 @@ grep -q 'archive is not bound to tag version' "$root/scripts/release-bind-archiv
 	fail 'release-bind-archives.sh must bind the main.version Go string to the tag'
 grep -q 'archive version label is not unique' "$root/scripts/release-bind-archives.sh" ||
 	fail 'release-bind-archives.sh must require exactly one delimited version label'
+grep -q 'cannot tell which -X variable a string belongs to' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must document that a byte scan cannot name the -X variable'
+grep -q 'cannot tell which' "$root/RELEASE_CHECKLIST.md" ||
+	fail 'RELEASE_CHECKLIST.md must document the byte-scan -X limit'
 grep -q 'archive buildTime is not RFC3339' "$root/scripts/release-bind-archives.sh" ||
 	fail 'release-bind-archives.sh must require a delimited RFC3339 buildTime'
+grep -q 'archive buildTime is not unique' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must require a unique RFC3339 buildTime'
+grep -q 'archive buildTime is not a real date' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must require buildTime to be a real date'
 grep -q 'archive gitCommit is not the tagged commit' "$root/scripts/release-bind-archives.sh" ||
 	fail 'release-bind-archives.sh must require a delimited 40-hex gitCommit'
+grep -q 'archive gitCommit is not unique' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must require a unique 40-hex gitCommit'
 grep -q -- '--title "$title"' "$script" ||
 	fail 'create-draft must set the release title from the first line of the tagged notes'
 if grep -qE -- '--title "\$tag"' "$script"; then
@@ -268,6 +278,18 @@ git -C "$fixture" fetch -q origin
 (cd "$fixture" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.Version=1.2.3" \
 	-o "$scratch/bin/double-version" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.Version=1.2.3" \
+	-o "$scratch/bin/cli-version" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=9999-99-99T99:99:99Z" \
+	-o "$scratch/bin/invalid-date" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.BuildTime=2021-01-02T03:04:05Z" \
+	-o "$scratch/bin/double-buildtime" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.GitCommit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+	-o "$scratch/bin/double-gitcommit" .)
 printf 'working-tree notes must not be used\n' >"$fixture/docs/releases/v1.2.3.md"
 
 pack_from() {
@@ -754,6 +776,7 @@ from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
 old = '''	if ! python3 - "$bin" "$version" "$tag" "$commit" "$info" <<'PY'
+from datetime import datetime
 from pathlib import Path
 import re
 import sys
@@ -920,6 +943,9 @@ refuse_ldflag stuffed-buildtime "$scratch/bin/stuffed-buildtime" 'buildTime=1.2.
 refuse_ldflag stuffed-gitcommit "$scratch/bin/stuffed-gitcommit" 'gitCommit=1.2.3 with version=9.9.9'
 refuse_ldflag stuffed-gitcommit-dash "$scratch/bin/stuffed-gitcommit-dash" 'gitCommit=-1.2.3 with version=9.9.9'
 refuse_ldflag double-version "$scratch/bin/double-version" 'two delimited 1.2.3 labels'
+refuse_ldflag invalid-date "$scratch/bin/invalid-date" 'buildTime=9999-99-99T99:99:99Z'
+refuse_ldflag double-buildtime "$scratch/bin/double-buildtime" 'two delimited RFC3339 timestamps'
+refuse_ldflag double-gitcommit "$scratch/bin/double-gitcommit" 'two delimited 40-hex commits'
 
 if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
@@ -1030,16 +1056,16 @@ if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '''if not has_rfc3339_build_time():
+old = '''if not rfc_hits:
     raise SystemExit("error: archive buildTime is not RFC3339")
 '''
-new = '''if False and not has_rfc3339_build_time():
+new = '''if False and not rfc_hits:
     raise SystemExit("error: archive buildTime is not RFC3339")
 '''
 if old not in text:
     raise SystemExit('live script is missing the RFC3339 buildTime check')
 mut = text.replace(old, new, 1)
-if 'if not has_rfc3339_build_time():' in mut:
+if 'if not rfc_hits:' in mut:
     raise SystemExit('RFC3339 mutant still requires buildTime')
 Path(sys.argv[2]).write_text(mut)
 PY
@@ -1080,6 +1106,103 @@ fi
 restore_draft
 pass 'reverting gitCommit 40-hex accepts gitCommit=1.2.3'
 
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if rfc_hits:
+    try:
+        datetime.strptime(rfc_hits[0].decode("ascii"), "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        raise SystemExit("error: archive buildTime is not a real date")
+'''
+new = '''if rfc_hits:
+    try:
+        pass
+    except ValueError:
+        raise SystemExit("error: archive buildTime is not a real date")
+'''
+if old not in text:
+    raise SystemExit('live script is missing the real-date buildTime check')
+mut = text.replace(old, new, 1)
+if 'datetime.strptime(rfc_hits[0]' in mut:
+    raise SystemExit('real-date mutant still parses buildTime')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'real-date mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/invalid-date" >/dev/null 2>"$scratch/mut-date.err"; then
+	fail "dropping real-date must accept 9999-99-99T99:99:99Z (log: $(cat "$scratch/mut-date.err"))"
+fi
+restore_draft
+pass 'reverting real-date buildTime accepts 9999-99-99T99:99:99Z'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if len(rfc_hits) > 1:
+    raise SystemExit("error: archive buildTime is not unique")
+'''
+new = '''if False and len(rfc_hits) > 1:
+    raise SystemExit("error: archive buildTime is not unique")
+'''
+if old not in text:
+    raise SystemExit('live script is missing the unique RFC3339 check')
+mut = text.replace(old, new, 1)
+if 'if len(rfc_hits) > 1:' in mut:
+    raise SystemExit('unique-RFC3339 mutant still requires one timestamp')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'unique-RFC3339 mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/double-buildtime" >/dev/null 2>"$scratch/mut-dbl-bt.err"; then
+	fail "dropping unique RFC3339 must accept two timestamps (log: $(cat "$scratch/mut-dbl-bt.err"))"
+fi
+restore_draft
+pass 'reverting unique RFC3339 accepts two delimited timestamps'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if len(delimited_matches(rb"[0-9a-f]{40}")) > 1:
+    raise SystemExit("error: archive gitCommit is not unique")
+'''
+new = '''if False and len(delimited_matches(rb"[0-9a-f]{40}")) > 1:
+    raise SystemExit("error: archive gitCommit is not unique")
+'''
+if old not in text:
+    raise SystemExit('live script is missing the unique 40-hex check')
+mut = text.replace(old, new, 1)
+if 'if len(delimited_matches(rb"[0-9a-f]{40}")) > 1:' in mut:
+    raise SystemExit('unique-40-hex mutant still requires one commit string')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'unique-40-hex mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$scratch/double-gitcommit" >/dev/null 2>"$scratch/mut-dbl-gc.err"; then
+	fail "dropping unique 40-hex must accept two commits (log: $(cat "$scratch/mut-dbl-gc.err"))"
+fi
+restore_draft
+pass 'reverting unique 40-hex accepts two delimited commits'
+
+cli_version="$scratch/cli-version"
+pack_from "$scratch/bin/cli-version" "$cli_version"
+sign_dir "$cli_version"
+"$scratch/bin/cli-version" version 2>&1 | grep -q '9.9.9' ||
+	fail 'cli.Version fixture must report main.version=9.9.9'
+if ! run_draft "$cli_version" >/dev/null 2>"$scratch/cli-version.err"; then
+	fail "create-draft must accept cli.Version=1.2.3 with main.version=9.9.9 (known limit) (log: $(cat "$scratch/cli-version.err"))"
+fi
+pass 'create-draft accepts cli.Version=1.2.3 with main.version=9.9.9 (known byte-scan limit)'
+
 forged_bt="$scratch/forged-buildtime"
 pack_from "$scratch/bin/forged-buildtime" "$forged_bt"
 sign_dir "$forged_bt"
@@ -1094,10 +1217,19 @@ if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '''if not has_rfc3339_build_time():
+old = '''if not rfc_hits:
     raise SystemExit("error: archive buildTime is not RFC3339")
+if len(rfc_hits) > 1:
+    raise SystemExit("error: archive buildTime is not unique")
+if rfc_hits:
+    try:
+        datetime.strptime(rfc_hits[0].decode("ascii"), "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        raise SystemExit("error: archive buildTime is not a real date")
 if not go_string(full_commit):
     raise SystemExit("error: archive gitCommit is not the tagged commit")
+if len(delimited_matches(rb"[0-9a-f]{40}")) > 1:
+    raise SystemExit("error: archive gitCommit is not unique")
 if mod != tag:
     raise SystemExit("error: archive mod version is not " + tag)
 if vcs_revision != full_commit:
