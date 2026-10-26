@@ -11,7 +11,7 @@
 #   3. the release is a draft whose asset names are exactly the expected set;
 #   4. both manifests list exactly the staged archives with matching hashes;
 #   5. verify-signatures.sh (minisign and PGP, keys from the tagged commit);
-#   6. release-bind-archives.sh (vcs.revision, vcs.modified, delimited version);
+#   6. release-bind-archives.sh (mod == tag, vcs.revision, vcs.modified);
 #   7. staged public-key assets match the tagged pins, public only;
 #   8. every draft asset, downloaded fresh, is byte-identical to the local file.
 set -euo pipefail
@@ -25,7 +25,7 @@ die() {
 tag="${1:-}"
 src="${2:-dist/release}"
 [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || die 'usage: release-publish.sh vX.Y.Z [source_dir]'
-repo="${SHELLSENTRY_RELEASE_REPO:-3leaps/shellsentry}"
+repo='3leaps/shellsentry'
 for tool in gh python3 minisign gpg gpgconf cmp git go; do
 	command -v "$tool" >/dev/null 2>&1 || die "$tool not found in PATH"
 done
@@ -69,16 +69,30 @@ tagged_notes="$(git -C "$root" rev-parse --verify --quiet "$commit:docs/releases
 	die "docs/releases/$tag.md is absent at the tagged commit"
 [[ "$(git -C "$root" hash-object -- "$src/release-notes-$tag.md")" == "$tagged_notes" ]] ||
 	die "release-notes-$tag.md differs from docs/releases/$tag.md at the tagged commit"
+notes_text="$(git -C "$root" cat-file blob "$commit:docs/releases/$tag.md")"
 
-# 2. A draft with exactly the expected asset names.
-release="$(gh release view "$tag" --repo "$repo" --json isDraft,assets)" || die "no release for $tag"
-python3 - "$release" "${expected[@]}" <<'PY' && rc=0 || rc=$?
+# 2. A draft with exactly the expected asset names, tagName, title, and body.
+release="$(gh release view "$tag" --repo "$repo" --json isDraft,assets,tagName,name,body)" || die "no release for $tag"
+python3 - "$release" "$tag" "$notes_text" "${expected[@]}" <<'PY' && rc=0 || rc=$?
 import json, sys
+
 payload = json.loads(sys.argv[1])
+tag, notes = sys.argv[2], sys.argv[3]
+expected = sorted(sys.argv[4:])
+if payload.get("tagName") != tag:
+    raise SystemExit(4)
+title = notes.splitlines()[0] if notes.strip() else ""
+got_body = payload.get("body") or ""
+want_body = notes
+if got_body.endswith("\n") and not want_body.endswith("\n"):
+    got_body = got_body[:-1]
+elif want_body.endswith("\n") and not got_body.endswith("\n"):
+    want_body = want_body[:-1]
+if payload.get("name") != title or got_body != want_body:
+    raise SystemExit(5)
 if payload.get("isDraft") is not True:
     raise SystemExit(2)
 names = sorted(a.get("name") or "" for a in payload.get("assets") or [])
-expected = sorted(sys.argv[2:])
 if names != expected:
     raise SystemExit(3)
 PY
@@ -86,6 +100,8 @@ case "$rc" in
 	0) ;;
 	2) die "$tag is not a draft; refusing to re-promote" ;;
 	3) die 'draft assets differ from the expected set' ;;
+	4) die 'release tagName differs from the signed tag' ;;
+	5) die 'release title or body differs from the tagged notes' ;;
 	*) die 'could not parse the GitHub release' ;;
 esac
 
@@ -196,8 +212,11 @@ for want in "${expected[@]}"; do
 	cmp -s "$fresh/$want" "$src/$want" || die "draft asset differs from the verified local file: $want"
 done
 
-# Residual: GitHub has no atomic compare-and-publish, so a writer with release
-# access could still swap an asset in the seconds between the comparison above
-# and this call. Re-download and verify after publishing if that matters.
+# Re-verify the tag immediately before promotion. GitHub has no atomic
+# compare-and-publish, so a replacement tag between the earlier checks and
+# --draft=false must still be refused.
+SHELLSENTRY_RELEASE_TAG="$tag" SHELLSENTRY_EXPECTED_TAG_OBJECT="$anchor_object" SHELLSENTRY_EXPECTED_COMMIT="$anchor_commit" \
+	"$root/scripts/release-verify-published-tag.sh" >/dev/null ||
+	die 'published tag no longer matches the verified anchor'
 gh release edit "$tag" --repo "$repo" --draft=false >/dev/null
 echo "[ok] $tag published from ${#expected[@]} byte-verified asset(s)"

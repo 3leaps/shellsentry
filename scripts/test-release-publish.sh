@@ -47,12 +47,32 @@ script="$root/scripts/release-publish.sh"
 [[ -x "$script" ]] || fail 'release-publish.sh must be executable'
 grep -q 'release-verify-published-tag.sh' "$script" ||
 	fail 'publish must re-check the published tag'
+[[ "$(grep -c 'scripts/release-verify-published-tag.sh' "$script")" -ge 2 ]] ||
+	fail 'publish must re-verify the tag immediately before --draft=false'
+grep -q 'Re-verify the tag immediately before promotion' "$script" ||
+	fail 'publish must re-verify the tag immediately before promotion'
 grep -q 'verify-signatures.sh' "$script" ||
 	fail 'publish must verify signatures via the tagged-key helper'
 grep -q 'release-bind-archives.sh' "$script" ||
 	fail 'publish must bind archives via the shared helper'
+grep -q 'mod version is not' "$root/scripts/release-bind-archives.sh" ||
+	fail 'bind must require go version -m mod to equal the tag'
 grep -q 'release-verify-tag-anchor.sh' "$root/scripts/release-verify-published-tag.sh" ||
 	fail 'published-tag must call tag-anchor'
+grep -q "repo='3leaps/shellsentry'" "$script" ||
+	fail 'publish must target 3leaps/shellsentry'
+if grep -q 'SHELLSENTRY_RELEASE_REPO' "$script"; then
+	fail 'publish must not honor a SHELLSENTRY_RELEASE_REPO override'
+fi
+grep -q 'tagName' "$script" || fail 'publish must check the release tagName'
+grep -q 'release title or body differs from the tagged notes' "$script" ||
+	fail 'publish must require the release title and body to equal the tagged notes'
+grep -q 'missing local release file' "$script" ||
+	fail 'publish must require local release files as regular files'
+grep -q 'tagged commit differs from the staged anchor' "$script" ||
+	fail 'publish must require the tagged commit to equal the staged anchor'
+grep -q 'staged anchor is for a different tag' "$script" ||
+	fail 'publish must check the staged anchor tag name'
 grep -E '^release-tag-tests:' -A50 "$root/Makefile" | grep -q 'test-release-publish' ||
 	fail 'release-tag-tests must run test-release-publish'
 pass 'publish reuses tag-anchor, tagged-key, and bind helpers'
@@ -133,6 +153,17 @@ printf '{"schema_version":"v0"}\n{"schema_version":"v0"}\n' >"$repo/keys/expecte
 git -C "$repo" add docs keys scripts internal main.go go.mod go.sum config
 git -C "$repo" -c commit.gpgsign=false commit -qm fixture
 full="$(git -C "$repo" rev-parse HEAD)"
+go_build() {
+	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
+		CGO_ENABLED=0 go build "$@"
+}
+mkdir -p "$scratch/bin"
+# Stamp mod as v0.9.9 on this same commit, then retag v1.2.3 for the gate.
+git -C "$repo" tag -a v0.9.9 -m tmp
+(cd "$repo" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/wrong-version" .)
+git -C "$repo" tag -d v0.9.9 >/dev/null
 GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
 	git -C "$repo" -c gpg.format=openpgp tag -s -a --cleanup=verbatim \
 	-u "$subkey!" -m 'shellsentry v1.2.3'$'\n' v1.2.3 HEAD ||
@@ -142,19 +173,24 @@ git init -q --bare "$scratch/origin.git"
 git -C "$repo" remote add origin "$scratch/origin.git"
 git -C "$repo" push -q origin HEAD:main
 git -C "$repo" push -q origin v1.2.3
+# Signed replacement object for the L6 download-time tag swap; restore the orig ref.
+GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
+	git -C "$repo" tag -fs -a --cleanup=verbatim -u "$subkey!" \
+	-m 'replaced-on-download'$'\n' v1.2.3 HEAD >/dev/null
+replacement_object="$(git -C "$repo" rev-parse refs/tags/v1.2.3)"
+git -C "$repo" push -q --force origin refs/tags/v1.2.3
+git -C "$scratch/origin.git" update-ref refs/tags/v1.2.3 "$orig_object"
+git -C "$repo" update-ref refs/tags/v1.2.3 "$orig_object"
+export FIXTURE_REPLACEMENT_OBJECT="$replacement_object"
 git -C "$repo" remote set-url origin https://github.com/3leaps/shellsentry.git
 git -C "$repo" config url."$scratch/origin.git".insteadOf https://github.com/3leaps/shellsentry.git
 git -C "$repo" fetch -q origin
 
-go_build() {
-	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
-		CGO_ENABLED=0 go build "$@"
-}
-mkdir -p "$scratch/bin"
 (cd "$repo" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
 	-o "$scratch/bin/shellsentry" .)
 [[ -s "$scratch/bin/shellsentry" ]] || fail 'fixture binary missing'
+[[ -s "$scratch/bin/wrong-version" ]] || fail 'wrong-mod fixture binary missing'
 (cd "$repo" && GOOS=darwin GOARCH=arm64 go_build -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
 	-o "$scratch/bin/shellsentry-darwin" .)
@@ -263,9 +299,18 @@ case "$1 $2" in
 	;;
 "release view")
 	names="$(cd "$FIXTURE_DRAFT" && ls -1 | jq -R . | jq -s 'map({name: .})')"
-	jq -n --argjson a "$names" --argjson d "${FIXTURE_IS_DRAFT:-true}" '{isDraft: $d, assets: $a}'
+	body="${FIXTURE_RELEASE_BODY-notes for v1.2.3
+}"
+	jq -n --argjson a "$names" --argjson d "${FIXTURE_IS_DRAFT:-true}" \
+		--arg tag "${FIXTURE_TAG_NAME:-v1.2.3}" \
+		--arg name "${FIXTURE_RELEASE_TITLE:-notes for v1.2.3}" \
+		--arg body "$body" \
+		'{isDraft: $d, assets: $a, tagName: $tag, name: $name, body: $body}'
 	;;
 "release download")
+	if [[ "${FIXTURE_REPLACE_TAG_ON_DOWNLOAD:-}" == 1 ]]; then
+		git -C "$FIXTURE_REMOTE" update-ref refs/tags/v1.2.3 "${FIXTURE_REPLACEMENT_OBJECT:?}"
+	fi
 	dir=""
 	while [[ $# -gt 0 ]]; do
 		[[ "$1" == --dir ]] && dir="$2"
@@ -279,6 +324,23 @@ esac
 SH
 chmod +x "$scratch/bin-path/gh"
 export PATH="$scratch/bin-path:$PATH"
+fixture_publish="$repo/scripts/release-publish.sh"
+fixture_published_tag="$repo/scripts/release-verify-published-tag.sh"
+restore_publish() {
+	cp "$script" "$fixture_publish"
+	chmod +x "$fixture_publish"
+}
+restore_published_tag() {
+	cp "$root/scripts/release-verify-published-tag.sh" "$fixture_published_tag"
+	chmod +x "$fixture_published_tag"
+}
+stub_published_tag() {
+	cat >"$fixture_published_tag" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+	chmod +x "$fixture_published_tag"
+}
 
 refuse() {
 	local reason="$1"
@@ -413,14 +475,306 @@ cp "$d/shellsentry-release-signing-key.asc" "$scratch/draft/"
 refuse 'staged PGP key asset contains secret key material'
 pass 'secret-key PGP asset is refused'
 
+# L1: edited GitHub title or body must not promote.
+stage
+export FIXTURE_RELEASE_BODY='edited notes
+'
+refuse 'release title or body differs from the tagged notes'
+unset FIXTURE_RELEASE_BODY
+pass 'edited release body is refused'
+
+stage
+export FIXTURE_RELEASE_TITLE='Edited Title'
+refuse 'release title or body differs from the tagged notes'
+unset FIXTURE_RELEASE_TITLE
+pass 'edited release title is refused'
+
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'if payload.get("name") != title or got_body != want_body:\n    raise SystemExit(5)\n'
+new = 'if False and (payload.get("name") != title or got_body != want_body):\n    raise SystemExit(5)\n'
+if old not in text:
+    raise SystemExit('live script is missing the title/body check')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('title/body mutant still compares name and body')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'title/body mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+stage
+export FIXTURE_RELEASE_BODY='edited notes
+'
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-body.err"; then
+	fail "dropping the title/body check must accept an edited body (log: $(cat "$scratch/mut-body.err"))"
+fi
+unset FIXTURE_RELEASE_BODY
+restore_publish
+pass 'reverting the title/body check accepts an edited body'
+
+# L2: release.tagName must equal the signed tag.
+stage
+export FIXTURE_TAG_NAME=v9.9.9
+refuse 'release tagName differs from the signed tag'
+unset FIXTURE_TAG_NAME
+pass 'mismatched release tagName is refused'
+
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = 'if payload.get("tagName") != tag:\n    raise SystemExit(4)\n'
+new = 'if False and payload.get("tagName") != tag:\n    raise SystemExit(4)\n'
+if old not in text:
+    raise SystemExit('live script is missing the tagName check')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('tagName mutant still compares tagName')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'tagName mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+stage
+export FIXTURE_TAG_NAME=v9.9.9
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-tagname.err"; then
+	fail "dropping the tagName check must accept a mismatched tagName (log: $(cat "$scratch/mut-tagname.err"))"
+fi
+unset FIXTURE_TAG_NAME
+restore_publish
+pass 'reverting the tagName check accepts a mismatched tagName'
+
+# L3/L4: bind-archives call. Wrong-mod archives (v0.9.9 stamp, same commit).
+stage
+pack_from "$scratch/bin/wrong-version" "$d" "$scratch/bin/wrong-version"
+sign_dir "$d"
+cp "$d"/* "$scratch/draft/"
+git -C "$repo" cat-file blob "$full:docs/security/release-signing-keys.asc" \
+	>"$d/shellsentry-release-signing-key.asc"
+cp "$scratch/good.pub" "$d/shellsentry-minisign.pub"
+git -C "$repo" cat-file blob "$full:docs/releases/v1.2.3.md" >"$d/release-notes-v1.2.3.md"
+cp "$d/shellsentry-release-signing-key.asc" "$d/shellsentry-minisign.pub" \
+	"$d/release-notes-v1.2.3.md" "$scratch/draft/"
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$orig_object" "$full" >"$d.anchor"
+refuse 'not bound to signed tag'
+pass 'wrong-mod archives are refused'
+
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '"$root/scripts/release-bind-archives.sh" "$tag" "$src" >/dev/null'
+new = 'true'
+if old not in text:
+    raise SystemExit('live script is missing the bind helper call')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('bind mutant still binds archives')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'publish bind mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-bind.err"; then
+	fail "dropping bind-archives must accept a v0.9.9 stamp (log: $(cat "$scratch/mut-bind.err"))"
+fi
+restore_publish
+pass 'reverting bind-archives accepts a v0.9.9 stamp'
+
+# L4: commit-equals-anchor. Stub published-tag so only the publish.sh compare remains.
+stub_published_tag
+stage
+printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$orig_object" "$(printf 'a%.0s' {1..40})" >"$d.anchor"
+refuse 'tagged commit differs from the staged anchor'
+pass 'mismatched staged-anchor commit is refused'
+
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '[[ "$commit" == "$anchor_commit" ]] || die \'tagged commit differs from the staged anchor\'\n'
+new = ''
+if old not in text:
+    raise SystemExit('live script is missing commit-equals-anchor')
+mut = text.replace(old, new, 1)
+if 'tagged commit differs from the staged anchor' in mut:
+    raise SystemExit('commit-equals-anchor mutant still compares')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'commit-equals-anchor mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-commit.err"; then
+	fail "dropping commit-equals-anchor must accept a mismatched anchor commit (log: $(cat "$scratch/mut-commit.err"))"
+fi
+restore_publish
+restore_published_tag
+pass 'reverting commit-equals-anchor accepts a mismatched anchor commit'
+
+# L4: staged anchor tag name.
+stage
+printf 'tag=v9.9.9\nobject=%s\ncommit=%s\n' "$orig_object" "$full" >"$d.anchor"
+refuse 'staged anchor is for a different tag'
+pass 'mismatched staged-anchor tag name is refused'
+
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''[[ "$(awk -F= '$1=="tag" {print $2}' "$anchor")" == "$tag" ]] || die 'staged anchor is for a different tag'
+'''
+new = 'true\n'
+if old not in text:
+    raise SystemExit('live script is missing the anchor tag-name check')
+mut = text.replace(old, new, 1)
+if 'staged anchor is for a different tag' in mut:
+    raise SystemExit('anchor tag-name mutant still compares')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'anchor tag-name mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-anchor-tag.err"; then
+	fail "dropping the anchor tag-name check must accept tag=v9.9.9 (log: $(cat "$scratch/mut-anchor-tag.err"))"
+fi
+restore_publish
+pass 'reverting the anchor tag-name check accepts tag=v9.9.9'
+
+# L4: local file presence. A symlink is a regular-file lookalike once ! -L is dropped.
+stage
+mv "$d/install-shellsentry.sh" "$d/.real-install"
+ln -s .real-install "$d/install-shellsentry.sh"
+refuse 'missing local release file'
+pass 'symlinked local release file is refused'
+
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '[[ -f "$src/$want" && ! -L "$src/$want" && -s "$src/$want" ]] || die "missing local release file: $want"'
+new = '[[ -f "$src/$want" && -s "$src/$want" ]] || die "missing local release file: $want"'
+if old not in text:
+    raise SystemExit('live script is missing the local-file presence loop')
+mut = text.replace(old, new, 1)
+if '! -L "$src/$want"' in mut:
+    raise SystemExit('presence mutant still rejects symlinks')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'local-file presence mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-presence.err"; then
+	fail "dropping ! -L must accept a symlinked local file (log: $(cat "$scratch/mut-presence.err"))"
+fi
+restore_publish
+pass 'reverting local-file presence accepts a symlink'
+
+# L5: SHELLSENTRY_RELEASE_REPO must not retarget gh.
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = "repo='3leaps/shellsentry'\n"
+new = 'repo="${SHELLSENTRY_RELEASE_REPO:-3leaps/shellsentry}"\n'
+if old not in text:
+    raise SystemExit('live script does not hardcode 3leaps/shellsentry')
+mut = text.replace(old, new, 1)
+if "repo='3leaps/shellsentry'" in mut:
+    raise SystemExit('repo-override mutant still hardcodes the repo')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'repo-override mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+stage
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && env SHELLSENTRY_RELEASE_REPO=attacker/shellsentry \
+	./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-repo.err"; then
+	fail "restoring SHELLSENTRY_RELEASE_REPO must retarget gh (log: $(cat "$scratch/mut-repo.err"))"
+fi
+grep -q -- '--repo attacker/shellsentry' "$FIXTURE_LOG" ||
+	fail 'repo-override mutant must pass --repo attacker/shellsentry'
+restore_publish
+pass 'reverting the hardcoded repo accepts SHELLSENTRY_RELEASE_REPO'
+
+# L6: tag replacement between download and --draft=false.
+stage
+export FIXTURE_REPLACE_TAG_ON_DOWNLOAD=1
+refuse 'published tag no longer matches the verified anchor'
+unset FIXTURE_REPLACE_TAG_ON_DOWNLOAD
+git -C "$scratch/origin.git" update-ref refs/tags/v1.2.3 "$orig_object"
+git -C "$repo" update-ref refs/tags/v1.2.3 "$orig_object"
+pass 'tag replaced on download is refused'
+
+if ! python3 - "$fixture_publish" "$fixture_publish" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''# Re-verify the tag immediately before promotion. GitHub has no atomic
+# compare-and-publish, so a replacement tag between the earlier checks and
+# --draft=false must still be refused.
+SHELLSENTRY_RELEASE_TAG="$tag" SHELLSENTRY_EXPECTED_TAG_OBJECT="$anchor_object" SHELLSENTRY_EXPECTED_COMMIT="$anchor_commit" \\
+	"$root/scripts/release-verify-published-tag.sh" >/dev/null ||
+	die 'published tag no longer matches the verified anchor'
+gh release edit "$tag" --repo "$repo" --draft=false >/dev/null
+'''
+new = '''gh release edit "$tag" --repo "$repo" --draft=false >/dev/null
+'''
+if old not in text:
+    raise SystemExit('live script is missing the pre-promotion tag re-verify')
+mut = text.replace(old, new, 1)
+if 'Re-verify the tag immediately before promotion' in mut:
+    raise SystemExit('L6 mutant still re-verifies before promotion')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'pre-promotion re-verify mutant was not distinguished'
+fi
+chmod +x "$fixture_publish"
+stage
+export FIXTURE_REPLACE_TAG_ON_DOWNLOAD=1
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-l6.err"; then
+	fail "dropping the pre-promotion re-verify must promote a replaced tag (log: $(cat "$scratch/mut-l6.err"))"
+fi
+unset FIXTURE_REPLACE_TAG_ON_DOWNLOAD
+git -C "$scratch/origin.git" update-ref refs/tags/v1.2.3 "$orig_object"
+git -C "$repo" update-ref refs/tags/v1.2.3 "$orig_object"
+restore_publish
+pass 'reverting the pre-promotion re-verify publishes a replaced tag'
+
 # Positive control: throwaway-key signed set promotes exactly once, after download.
 stage
 : >"$FIXTURE_LOG"
-(cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null
+if ! (cd "$repo" && env SHELLSENTRY_RELEASE_REPO=attacker/shellsentry \
+	./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/ok.err"; then
+	fail "positive control must publish (log: $(cat "$scratch/ok.err"))"
+fi
 [[ "$(grep -c '^release edit v1.2.3 .*--draft=false' "$FIXTURE_LOG")" == 1 ]] ||
 	fail 'positive control must promote exactly once'
 [[ "$(grep -n '' "$FIXTURE_LOG" | grep -E 'release (download|edit)' | head -1)" == *'release download'* ]] ||
 	fail 'promotion must happen after the draft download'
+grep -q -- '--repo 3leaps/shellsentry' "$FIXTURE_LOG" ||
+	fail 'publish must pass --repo 3leaps/shellsentry'
+if grep -q -- '--repo attacker/shellsentry' "$FIXTURE_LOG"; then
+	fail 'publish must ignore SHELLSENTRY_RELEASE_REPO'
+fi
 pass 'positive control signed with throwaway keys publishes after byte comparison'
 
 echo '[ok] publish promotes only a byte-verified, pin-signed draft bound to the tag'

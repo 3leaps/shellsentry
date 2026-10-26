@@ -62,8 +62,13 @@ grep -q 'VALIDSIG' "$script" || fail 'release-create-draft.sh must verify GPG si
 grep -q 'release-bind-archives.sh' "$script" || fail 'release-create-draft.sh must bind archives via the shared helper'
 grep -q 'vcs.revision' "$root/scripts/release-bind-archives.sh" ||
 	fail 'release-bind-archives.sh must bind archives via go version -m vcs.revision'
-grep -q 'delimited' "$root/scripts/release-bind-archives.sh" ||
-	fail 'release-bind-archives.sh must bind ldflag strings with left and right boundaries'
+grep -q 'mod version is not' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must bind go version -m mod to the tag exactly'
+grep -q -- '--title "$title"' "$script" ||
+	fail 'create-draft must set the release title from the first line of the tagged notes'
+if grep -qE -- '--title "\$tag"' "$script"; then
+	fail 'create-draft must not use the tag as the release title'
+fi
 grep -q 'release-verify-tag-anchor.sh' "$script" || fail 'release-create-draft.sh must verify the tag against origin'
 grep -q 'cat-file blob "$commit:docs/releases/' "$script" ||
 	fail 'release-create-draft.sh must read release notes from the tagged commit'
@@ -183,6 +188,17 @@ git -C "$fixture" add docs keys scripts internal main.go go.mod go.sum
 git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
 full="$(git -C "$fixture" rev-parse HEAD)"
 short="$(git -C "$fixture" rev-parse --short HEAD)"
+go_build() {
+	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
+		CGO_ENABLED=0 go build "$@"
+}
+mkdir -p "$scratch/bin"
+# Stamp mod as v0.9.9 on this same commit, then retag v1.2.3 for the gate.
+git -C "$fixture" tag -a v0.9.9 -m tmp
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/wrong-version" .)
+git -C "$fixture" tag -d v0.9.9 >/dev/null
 GIT_COMMITTER_NAME='3 Leaps Infosec Team' GIT_COMMITTER_EMAIL=infosec@3leaps.net \
 	git -C "$fixture" -c gpg.format=openpgp tag -s -a --cleanup=verbatim \
 	-u "$subkey!" -m 'shellsentry v1.2.3'$'\n' v1.2.3 HEAD ||
@@ -192,19 +208,10 @@ git -C "$fixture" remote add origin "$scratch/origin.git"
 git -C "$fixture" push -q origin HEAD:main
 git -C "$fixture" push -q origin v1.2.3
 git -C "$fixture" fetch -q origin
-
-go_build() {
-	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
-		CGO_ENABLED=0 go build "$@"
-}
-mkdir -p "$scratch/bin"
 (cd "$fixture" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
 	-o "$scratch/bin/shellsentry" .)
 [[ -s "$scratch/bin/shellsentry" ]] || fail 'fixture binary missing'
-(cd "$fixture" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full}" \
-	-o "$scratch/bin/wrong-version" .)
 (cd "$fixture" && go_build -buildvcs=false -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=deadbee000000000000000000000000000000000" \
 	-o "$scratch/bin/wrong-commit" .)
@@ -215,9 +222,6 @@ mkdir -p "$scratch/bin"
 (cd "$fixture" && go_build -buildvcs=false -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=zz${short}" \
 	-o "$scratch/bin/forged-zz" .)
-(cd "$fixture" && go_build -trimpath \
-	-ldflags="-s -w -X main.version=11.2.3 -X main.gitCommit=${full}" \
-	-o "$scratch/bin/forged-version" .)
 (cd "$fixture" && go_build -buildvcs=false -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=cafebabeface0000000000000000000000000000 -X main.buildTime=${full}" \
 	-o "$scratch/bin/forged-buildtime" .)
@@ -351,6 +355,8 @@ fi
 grep -q 'SHA256SUMS.minisig' "$GH_TRACE.create" || fail 'draft must upload minisign signatures'
 grep -q 'SHA256SUMS.asc' "$GH_TRACE.create" || fail 'draft must upload GPG signatures'
 grep -q 'release-notes.md' "$GH_TRACE.create" || fail 'draft must pass notes extracted from the tagged commit'
+grep -q -- '--title notes for v1.2.3' "$GH_TRACE.create" ||
+	fail 'gh release create must pass --title from the first line of the tagged notes'
 if grep -q "$fixture/docs/releases" "$GH_TRACE.create"; then
 	fail 'draft must not read release notes from the working tree'
 fi
@@ -704,15 +710,13 @@ if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '''	if ! python3 - "$bin" "$version" "$commit" "$info" <<'PY'
-from pathlib import Path
+old = '''	if ! python3 - "$tag" "$commit" "$info" <<'PY'
 import sys
 
-data = Path(sys.argv[1]).read_bytes()
-version, full_commit, info = sys.argv[2], sys.argv[3], sys.argv[4]
+tag, full_commit, info = sys.argv[1], sys.argv[2], sys.argv[3]
 '''
 new = '''	short="$(git -C "$root" rev-parse --short "$commit")"
-	if ! python3 - "$bin" "$version" "$short" <<'PY'
+	if ! python3 - "$bin" "$tag" "$short" <<'PY'
 from pathlib import Path
 import sys
 
@@ -731,15 +735,15 @@ def has_injected(value: str) -> bool:
             return True
         start = i + 1
 
-if not has_injected(version):
+if not has_injected(version.lstrip("v")):
     raise SystemExit("error: archive is not bound to tag version " + version)
 if not has_injected(commit):
     raise SystemExit("error: archive is not bound to tagged commit " + commit)
 raise SystemExit(0)
-version, full_commit, info = sys.argv[2], sys.argv[3], sys.argv[4]
+tag, full_commit, info = sys.argv[1], sys.argv[2], sys.argv[3]
 '''
 if old not in text:
-    raise SystemExit('live script is missing the vcs.revision bind')
+    raise SystemExit('live script is missing the go version -m bind')
 mut = text.replace(old, new, 1)
 if 'rev-parse --short' not in mut:
     raise SystemExit('zz mutant did not switch to a short commit bind')
@@ -755,38 +759,32 @@ fi
 restore_draft
 pass 'reverting to a 7-char right-NUL bind accepts gitCommit=zz<short>'
 
-forged_ver="$scratch/forged-version"
-pack_from "$scratch/bin/forged-version" "$forged_ver"
-sign_dir "$forged_ver"
-if run_draft "$forged_ver" >/dev/null 2>"$scratch/forged-ver.err"; then
-	fail 'create-draft must refuse version=11.2.3 for tag 1.2.3'
-fi
-grep -q 'not bound to signed tag' "$scratch/forged-ver.err" ||
-	fail "forged-version refusal (log: $(cat "$scratch/forged-ver.err"))"
-pass 'create-draft refuses version=11.2.3 for tag 1.2.3'
-
 if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '            left_ok = i == 0 or not (48 <= data[i - 1] <= 57)'
-new = '            left_ok = True'
+old = '''if mod != tag:
+    raise SystemExit("error: archive mod version is not " + tag)
+'''
+new = '''if False and mod != tag:
+    raise SystemExit("error: archive mod version is not " + tag)
+'''
 if old not in text:
-    raise SystemExit('live script is missing the version left-boundary check')
+    raise SystemExit('live script is missing the mod == tag check')
 mut = text.replace(old, new, 1)
-if old in mut:
-    raise SystemExit('version-boundary mutant still checks the left digit')
+if 'if mod != tag:' in mut:
+    raise SystemExit('mod mutant still requires mod == tag')
 Path(sys.argv[2]).write_text(mut)
 PY
 then
-	fail 'forged-version mutant was not distinguished'
+	fail 'wrong-mod mutant was not distinguished'
 fi
 chmod +x "$fixture_bind"
-if ! "$fixture_script" v1.2.3 "$forged_ver" >/dev/null 2>"$scratch/mut-ver.err"; then
-	fail "dropping the version left boundary must accept 11.2.3 (log: $(cat "$scratch/mut-ver.err"))"
+if ! "$fixture_script" v1.2.3 "$wrong_ver" >/dev/null 2>"$scratch/mut-mod.err"; then
+	fail "dropping the mod == tag check must accept a v0.9.9 stamp (log: $(cat "$scratch/mut-mod.err"))"
 fi
 restore_draft
-pass 'reverting the version left boundary accepts 11.2.3'
+pass 'reverting the mod == tag check accepts a v0.9.9 stamp'
 
 forged_bt="$scratch/forged-buildtime"
 pack_from "$scratch/bin/forged-buildtime" "$forged_bt"
@@ -802,18 +800,18 @@ if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '''if vcs_revision != full_commit:
+old = '''if mod != tag:
+    raise SystemExit("error: archive mod version is not " + tag)
+if vcs_revision != full_commit:
     raise SystemExit("error: archive vcs.revision is not the tagged commit")
 if vcs_modified != "false":
     raise SystemExit("error: archive vcs.modified is not false")
 '''
-new = '''if vcs_revision is not None and vcs_revision != full_commit:
-    raise SystemExit("error: archive vcs.revision is not the tagged commit")
-if vcs_revision is None and not delimited(full_commit):
-    raise SystemExit("error: archive is not bound to tagged commit " + full_commit)
+new = '''if False:
+    raise SystemExit("error: archive bind skipped")
 '''
 if old not in text:
-    raise SystemExit('live script does not require vcs.revision')
+    raise SystemExit('live script does not require mod and vcs.revision')
 mut = text.replace(old, new, 1)
 if 'if vcs_revision != full_commit:' in mut:
     raise SystemExit('buildTime mutant still requires vcs.revision')
@@ -886,7 +884,7 @@ from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
 old = 'info="$(go version -m "$bin" 2>/dev/null)" || die "$archive is not a Go binary"'
-new = 'info="$(go version -m "$bin" 2>/dev/null)" || info=$\'build\\tvcs.revision=\'"$commit"$\'\\nbuild\\tvcs.modified=false\''
+new = 'info="$(go version -m "$bin" 2>/dev/null)" || info=$\'mod\\tgithub.com/3leaps/shellsentry\\t\'"$tag"$\'\\nbuild\\tvcs.revision=\'"$commit"$\'\\nbuild\\tvcs.modified=false\''
 if old not in text:
     raise SystemExit('live script is missing the is-Go-binary check')
 mut = text.replace(old, new, 1)
