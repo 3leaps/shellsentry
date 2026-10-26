@@ -64,6 +64,8 @@ grep -q 'vcs.revision' "$root/scripts/release-bind-archives.sh" ||
 	fail 'release-bind-archives.sh must bind archives via go version -m vcs.revision'
 grep -q 'mod version is not' "$root/scripts/release-bind-archives.sh" ||
 	fail 'release-bind-archives.sh must bind go version -m mod to the tag exactly'
+grep -q 'archive is not bound to tag version' "$root/scripts/release-bind-archives.sh" ||
+	fail 'release-bind-archives.sh must bind the main.version Go string to the tag'
 grep -q -- '--title "$title"' "$script" ||
 	fail 'create-draft must set the release title from the first line of the tagged notes'
 if grep -qE -- '--title "\$tag"' "$script"; then
@@ -225,6 +227,16 @@ git -C "$fixture" fetch -q origin
 (cd "$fixture" && go_build -buildvcs=false -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=cafebabeface0000000000000000000000000000 -X main.buildTime=${full}" \
 	-o "$scratch/bin/forged-buildtime" .)
+# Tagged builds: mod and vcs.revision match, but main.version does not.
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/wrong-ldflag-999" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=x1.2.3 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/wrong-ldflag-x" .)
+(cd "$fixture" && go_build -trimpath \
+	-ldflags="-s -w -X main.gitCommit=${full}" \
+	-o "$scratch/bin/wrong-ldflag-dev" .)
 printf 'working-tree notes must not be used\n' >"$fixture/docs/releases/v1.2.3.md"
 
 pack_from() {
@@ -710,10 +722,12 @@ if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text()
-old = '''	if ! python3 - "$tag" "$commit" "$info" <<'PY'
+old = '''	if ! python3 - "$bin" "$version" "$tag" "$commit" "$info" <<'PY'
+from pathlib import Path
 import sys
 
-tag, full_commit, info = sys.argv[1], sys.argv[2], sys.argv[3]
+data = Path(sys.argv[1]).read_bytes()
+version, tag, full_commit, info = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 '''
 new = '''	short="$(git -C "$root" rev-parse --short "$commit")"
 	if ! python3 - "$bin" "$tag" "$short" <<'PY'
@@ -785,6 +799,69 @@ if ! "$fixture_script" v1.2.3 "$wrong_ver" >/dev/null 2>"$scratch/mut-mod.err"; 
 fi
 restore_draft
 pass 'reverting the mod == tag check accepts a v0.9.9 stamp'
+
+wrong_ldflag_999="$scratch/wrong-ldflag-999"
+pack_from "$scratch/bin/wrong-ldflag-999" "$wrong_ldflag_999"
+sign_dir "$wrong_ldflag_999"
+if run_draft "$wrong_ldflag_999" >/dev/null 2>"$scratch/wrong-ldflag-999.err"; then
+	fail 'create-draft must refuse -X main.version=9.9.9 at the tagged commit'
+fi
+grep -q 'not bound to signed tag' "$scratch/wrong-ldflag-999.err" ||
+	fail "wrong-ldflag-999 refusal (log: $(cat "$scratch/wrong-ldflag-999.err"))"
+pass 'create-draft refuses -X main.version=9.9.9'
+
+wrong_ldflag_x="$scratch/wrong-ldflag-x"
+pack_from "$scratch/bin/wrong-ldflag-x" "$wrong_ldflag_x"
+sign_dir "$wrong_ldflag_x"
+if run_draft "$wrong_ldflag_x" >/dev/null 2>"$scratch/wrong-ldflag-x.err"; then
+	fail 'create-draft must refuse -X main.version=x1.2.3 at the tagged commit'
+fi
+grep -q 'not bound to signed tag' "$scratch/wrong-ldflag-x.err" ||
+	fail "wrong-ldflag-x refusal (log: $(cat "$scratch/wrong-ldflag-x.err"))"
+pass 'create-draft refuses -X main.version=x1.2.3'
+
+wrong_ldflag_dev="$scratch/wrong-ldflag-dev"
+pack_from "$scratch/bin/wrong-ldflag-dev" "$wrong_ldflag_dev"
+sign_dir "$wrong_ldflag_dev"
+if run_draft "$wrong_ldflag_dev" >/dev/null 2>"$scratch/wrong-ldflag-dev.err"; then
+	fail 'create-draft must refuse a tagged build whose main.version is still dev'
+fi
+grep -q 'not bound to signed tag' "$scratch/wrong-ldflag-dev.err" ||
+	fail "wrong-ldflag-dev refusal (log: $(cat "$scratch/wrong-ldflag-dev.err"))"
+pass 'create-draft refuses a tagged build with default main.version=dev'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if not delimited_version(version):
+    raise SystemExit("error: archive is not bound to tag version " + version)
+'''
+new = '''if False and not delimited_version(version):
+    raise SystemExit("error: archive is not bound to tag version " + version)
+'''
+if old not in text:
+    raise SystemExit('live script is missing the main.version byte scan')
+mut = text.replace(old, new, 1)
+if 'if not delimited_version(version):' in mut:
+    raise SystemExit('version-scan mutant still requires delimited main.version')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'main.version byte-scan mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+if ! "$fixture_script" v1.2.3 "$wrong_ldflag_999" >/dev/null 2>"$scratch/mut-ldflag-999.err"; then
+	fail "dropping the main.version scan must accept 9.9.9 (log: $(cat "$scratch/mut-ldflag-999.err"))"
+fi
+if ! "$fixture_script" v1.2.3 "$wrong_ldflag_x" >/dev/null 2>"$scratch/mut-ldflag-x.err"; then
+	fail "dropping the main.version scan must accept x1.2.3 (log: $(cat "$scratch/mut-ldflag-x.err"))"
+fi
+if ! "$fixture_script" v1.2.3 "$wrong_ldflag_dev" >/dev/null 2>"$scratch/mut-ldflag-dev.err"; then
+	fail "dropping the main.version scan must accept default dev (log: $(cat "$scratch/mut-ldflag-dev.err"))"
+fi
+restore_draft
+pass 'reverting the main.version byte scan accepts 9.9.9, x1.2.3, and default dev'
 
 forged_bt="$scratch/forged-buildtime"
 pack_from "$scratch/bin/forged-buildtime" "$forged_bt"

@@ -57,6 +57,8 @@ grep -q 'release-bind-archives.sh' "$script" ||
 	fail 'publish must bind archives via the shared helper'
 grep -q 'mod version is not' "$root/scripts/release-bind-archives.sh" ||
 	fail 'bind must require go version -m mod to equal the tag'
+grep -q 'archive is not bound to tag version' "$root/scripts/release-bind-archives.sh" ||
+	fail 'bind must require a delimited main.version Go string'
 grep -q 'release-verify-tag-anchor.sh' "$root/scripts/release-verify-published-tag.sh" ||
 	fail 'published-tag must call tag-anchor'
 grep -q "repo='3leaps/shellsentry'" "$script" ||
@@ -195,6 +197,15 @@ git -C "$repo" fetch -q origin
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full}" \
 	-o "$scratch/bin/shellsentry-darwin" .)
 [[ -s "$scratch/bin/shellsentry-darwin" ]] || fail 'darwin fixture binary missing'
+(cd "$repo" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/wrong-ldflag-999" .)
+(cd "$repo" && go_build -trimpath \
+	-ldflags="-s -w -X main.version=x1.2.3 -X main.gitCommit=${full}" \
+	-o "$scratch/bin/wrong-ldflag-x" .)
+(cd "$repo" && go_build -trimpath \
+	-ldflags="-s -w -X main.gitCommit=${full}" \
+	-o "$scratch/bin/wrong-ldflag-dev" .)
 
 pack_from() {
 	local binary="$1" dest="$2" darwin="${3:-$1}"
@@ -271,6 +282,19 @@ stage() {
 	mkdir -p "$scratch/draft"
 	cp "$d"/* "$scratch/draft/"
 }
+restage_from() {
+	local binary="$1"
+	pack_from "$binary" "$d" "$binary"
+	sign_dir "$d"
+	cp "$scratch/good.pub" "$d/shellsentry-minisign.pub"
+	git -C "$repo" cat-file blob "$full:docs/security/release-signing-keys.asc" \
+		>"$d/shellsentry-release-signing-key.asc"
+	git -C "$repo" cat-file blob "$full:docs/releases/v1.2.3.md" >"$d/release-notes-v1.2.3.md"
+	printf 'tag=v1.2.3\nobject=%s\ncommit=%s\n' "$orig_object" "$full" >"$d.anchor"
+	rm -rf "$scratch/draft"
+	mkdir -p "$scratch/draft"
+	cp "$d"/* "$scratch/draft/"
+}
 
 mkdir -p "$scratch/bin-path"
 export FIXTURE_LOG="$scratch/gh.log"
@@ -325,10 +349,15 @@ SH
 chmod +x "$scratch/bin-path/gh"
 export PATH="$scratch/bin-path:$PATH"
 fixture_publish="$repo/scripts/release-publish.sh"
+fixture_bind="$repo/scripts/release-bind-archives.sh"
 fixture_published_tag="$repo/scripts/release-verify-published-tag.sh"
 restore_publish() {
 	cp "$script" "$fixture_publish"
 	chmod +x "$fixture_publish"
+}
+restore_bind() {
+	cp "$root/scripts/release-bind-archives.sh" "$fixture_bind"
+	chmod +x "$fixture_bind"
 }
 restore_published_tag() {
 	cp "$root/scripts/release-verify-published-tag.sh" "$fixture_published_tag"
@@ -589,6 +618,56 @@ if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scr
 fi
 restore_publish
 pass 'reverting bind-archives accepts a v0.9.9 stamp'
+
+# Tagged builds whose main.version ldflag is not the tag: mod and vcs match.
+restage_from "$scratch/bin/wrong-ldflag-999"
+refuse 'not bound to signed tag'
+pass 'publish refuses -X main.version=9.9.9'
+restage_from "$scratch/bin/wrong-ldflag-x"
+refuse 'not bound to signed tag'
+pass 'publish refuses -X main.version=x1.2.3'
+restage_from "$scratch/bin/wrong-ldflag-dev"
+refuse 'not bound to signed tag'
+pass 'publish refuses a tagged build with default main.version=dev'
+
+if ! python3 - "$fixture_bind" "$fixture_bind" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = '''if not delimited_version(version):
+    raise SystemExit("error: archive is not bound to tag version " + version)
+'''
+new = '''if False and not delimited_version(version):
+    raise SystemExit("error: archive is not bound to tag version " + version)
+'''
+if old not in text:
+    raise SystemExit('live script is missing the main.version byte scan')
+mut = text.replace(old, new, 1)
+if 'if not delimited_version(version):' in mut:
+    raise SystemExit('version-scan mutant still requires delimited main.version')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+	fail 'publish main.version mutant was not distinguished'
+fi
+chmod +x "$fixture_bind"
+restage_from "$scratch/bin/wrong-ldflag-999"
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-ldflag-999.err"; then
+	fail "dropping the main.version scan must accept 9.9.9 (log: $(cat "$scratch/mut-ldflag-999.err"))"
+fi
+restage_from "$scratch/bin/wrong-ldflag-x"
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-ldflag-x.err"; then
+	fail "dropping the main.version scan must accept x1.2.3 (log: $(cat "$scratch/mut-ldflag-x.err"))"
+fi
+restage_from "$scratch/bin/wrong-ldflag-dev"
+: >"$FIXTURE_LOG"
+if ! (cd "$repo" && ./scripts/release-publish.sh v1.2.3 "$d") >/dev/null 2>"$scratch/mut-ldflag-dev.err"; then
+	fail "dropping the main.version scan must accept default dev (log: $(cat "$scratch/mut-ldflag-dev.err"))"
+fi
+restore_bind
+pass 'reverting the main.version byte scan accepts 9.9.9, x1.2.3, and default dev'
 
 # L4: commit-equals-anchor. Stub published-tag so only the publish.sh compare remains.
 stub_published_tag
