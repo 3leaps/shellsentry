@@ -156,10 +156,12 @@ notes="$work/release-notes.md"
 git -C "$root" cat-file blob "$commit:docs/releases/${tag}.md" >"$notes" 2>/dev/null ||
 	die "missing release notes in $tag: docs/releases/${tag}.md"
 [[ -s "$notes" ]] || die "missing release notes in $tag: docs/releases/${tag}.md"
+title="$(python3 -c 'import pathlib,sys; t=pathlib.Path(sys.argv[1]).read_text(); print(t.splitlines()[0] if t.strip() else "")' "$notes")"
+[[ -n "$title" ]] || die "tagged notes have no title line: docs/releases/${tag}.md"
 files=()
 for want in "${expected[@]}"; do
 	files+=("$src/$want")
 done
 gh release create "$tag" --repo 3leaps/shellsentry --verify-tag --draft \
-	--title "$tag" --notes-file "$notes" "${files[@]}"
+	--title "$title" --notes-file "$notes" "${files[@]}"
 echo "[ok] draft release $tag created from staged packages bound to $tag"

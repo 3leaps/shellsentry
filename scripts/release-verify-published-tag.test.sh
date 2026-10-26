@@ -243,6 +243,39 @@ grep -q 'must both be 40-hex' "$scratch/out"
 git -C "$scratch/remote.git" update-ref refs/tags/v1.2.3 "$anchor_object"
 anchored > /dev/null
 
+# Origin URL: attacker remote with insteadOf so fetch still works.
+git -C "$op" remote set-url origin https://github.com/attacker/shellsentry.git
+git -C "$op" config url."$scratch/remote.git".insteadOf https://github.com/attacker/shellsentry.git
+expect_fail 'origin must be 3leaps/shellsentry'
+# Revert: dropping the URL check must accept the attacker origin.
+if ! python3 - "$op/scripts/release-verify-published-tag.sh" "$op/scripts/release-verify-published-tag.sh" <<'PY'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+old = "*) die 'origin must be 3leaps/shellsentry on GitHub' ;;"
+new = "*) ;;"
+if old not in text:
+    raise SystemExit('live script is missing the origin URL check')
+mut = text.replace(old, new, 1)
+if old in mut:
+    raise SystemExit('origin-URL mutant still refuses a non-3leaps origin')
+Path(sys.argv[2]).write_text(mut)
+PY
+then
+    echo 'error: origin-URL mutant was not distinguished' >&2
+    exit 1
+fi
+chmod +x "$op/scripts/release-verify-published-tag.sh"
+if ! gate > /dev/null; then
+    echo 'error: dropping the origin URL check must accept attacker/shellsentry' >&2
+    exit 1
+fi
+cp "$root/scripts/release-verify-published-tag.sh" "$op/scripts/"
+chmod +x "$op/scripts/release-verify-published-tag.sh"
+git -C "$op" remote set-url origin https://github.com/3leaps/shellsentry.git
+git -C "$op" config url."$scratch/remote.git".insteadOf https://github.com/3leaps/shellsentry.git
+gate > /dev/null
+
 # Absent remote tag: must fail.
 git -C "$scratch/remote.git" update-ref -d refs/tags/v1.2.3
 expect_fail 'remote release tag is absent'
