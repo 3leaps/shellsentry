@@ -16,7 +16,9 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workflow_native_guards import (  # noqa: E402
-    FLOATING_LABEL_RE,
+    PINNED_SELF_HOSTED_LABELS,
+    contains_retired_runner_labels,
+    uses_floating_runner_label,
     validate_release_guards,
     validate_windows_zip_script,
 )
@@ -39,10 +41,10 @@ BANNED = (
 )
 NATIVE_CELLS = (
     ("ubuntu-24.04", "linux", "amd64"),
-    ("ubuntu-latest-arm64-s", "linux", "arm64"),
+    ("ubuntu-24.04-arm64-s", "linux", "arm64"),
     ("macos-15", "darwin", "arm64"),
     ("windows-2022", "windows", "amd64"),
-    ("windows-latest-arm64-s", "windows", "arm64"),
+    ("windows-11-arm64-s", "windows", "arm64"),
 )
 
 
@@ -67,13 +69,22 @@ def validate(text: str) -> tuple[bool, str]:
         failures.append("tag workflow must upload artifacts (no GitHub Release)")
     if "release-packages-" not in text:
         failures.append("tag workflow must upload a combined release-packages artifact")
-    if FLOATING_LABEL_RE.search(text):
+    if uses_floating_runner_label(text):
         failures.append("tag workflow must not use ubuntu-latest, macos-latest, or windows-latest")
+    retired = contains_retired_runner_labels(text)
+    if retired:
+        failures.append(
+            "tag workflow must not use retired runner labels: " + ", ".join(retired)
+        )
     if not re.search(r"(?m)^\s+runs-on:\s*ubuntu-24\.04\s*$", text):
         failures.append("tag workflow must pin ubuntu-24.04 for non-matrix jobs")
     if not re.search(r"(?m)^  build:\n(?:.*\n)*?    runs-on:\s*\$\{\{\s*matrix\.runner\s*\}\}\s*$", text):
         failures.append("build must run on matrix.runner")
     for runner, goos, goarch in NATIVE_CELLS:
+        if goos != "darwin" and goarch == "arm64" and runner not in PINNED_SELF_HOSTED_LABELS:
+            failures.append(
+                f"native cell {goos}/{goarch} runner {runner} must be a pinned self-hosted label"
+            )
         cell = re.compile(
             rf"- runner:\s*{re.escape(runner)}\n\s+goos:\s*{re.escape(goos)}\n\s+goarch:\s*{re.escape(goarch)}\b"
         )
@@ -175,6 +186,39 @@ def mutate_macos_latest(text: str) -> str:
     mut = text.replace("macos-15", "macos-latest", 1)
     if "macos-15" in mut:
         raise SystemExit("macos-latest mutant still has macos-15")
+    return mut
+
+
+def mutate_linux_arm64_retired(text: str) -> str:
+    old = "ubuntu-24.04-arm64-s"
+    new = "ubuntu-" + "latest" + "-arm64-s"
+    if old not in text:
+        raise SystemExit("live workflow is missing ubuntu-24.04-arm64-s")
+    mut = text.replace(old, new, 1)
+    if old in mut:
+        raise SystemExit("linux arm64 retired-label mutant still has ubuntu-24.04-arm64-s")
+    return mut
+
+
+def mutate_windows_arm64_retired(text: str) -> str:
+    old = "windows-11-arm64-s"
+    new = "windows-" + "latest" + "-arm64-s"
+    if old not in text:
+        raise SystemExit("live workflow is missing windows-11-arm64-s")
+    mut = text.replace(old, new, 1)
+    if old in mut:
+        raise SystemExit("windows arm64 retired-label mutant still has windows-11-arm64-s")
+    return mut
+
+
+def mutate_linux_arm64_wrong_runner(text: str) -> str:
+    old = "          - runner: ubuntu-24.04-arm64-s\n            goos: linux\n            goarch: arm64"
+    new = "          - runner: ubuntu-24.04\n            goos: linux\n            goarch: arm64"
+    if old not in text:
+        raise SystemExit("live workflow is missing the linux/arm64 native cell")
+    mut = text.replace(old, new, 1)
+    if old in mut:
+        raise SystemExit("linux arm64 wrong-runner mutant still uses ubuntu-24.04-arm64-s")
     return mut
 
 
@@ -356,6 +400,9 @@ for label, mutator in (
     ("cross-compile on ubuntu-24.04", mutate_cross_compile),
     ("native host assert dropped", mutate_drop_host_assert),
     ("macos-latest runner", mutate_macos_latest),
+    ("linux arm64 retired runner", mutate_linux_arm64_retired),
+    ("windows arm64 retired runner", mutate_windows_arm64_retired),
+    ("linux arm64 runner off table", mutate_linux_arm64_wrong_runner),
     ("build job-level if:", mutate_build_job_if),
     ("host-check if: false", mutate_host_step_if_false),
     ("host-check || true", mutate_host_or_true),

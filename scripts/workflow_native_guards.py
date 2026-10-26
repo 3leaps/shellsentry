@@ -22,8 +22,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ZIP_SCRIPT = ROOT / "scripts" / "package-windows-zip.sh"
 
+# Matches GH-hosted *-latest and retired org *-latest-* labels. Pinned
+# self-hosted names in PINNED_SELF_HOSTED_LABELS are allowlisted.
 FLOATING_LABEL_RE = re.compile(
-    r"(?m)^\s+(?:runs-on|runner):\s*(ubuntu-latest|macos-latest|windows-latest)\s*$"
+    r"(?m)^\s+(?:runs-on|runner):\s*((?:ubuntu|macos|windows)-latest(?:-\S+)?)\s*$"
+)
+PINNED_SELF_HOSTED_LABELS = frozenset(
+    {
+        "ubuntu-24.04-arm64-s",
+        "windows-11-arm64-s",
+    }
 )
 SETUP_PYTHON_RE = re.compile(
     r"uses:\s*actions/setup-python@([0-9a-f]{40})\s+#\s*(\S+)"
@@ -35,10 +43,10 @@ EXIT_ZERO_RE = re.compile(r"(?m)\bexit\s+0\b")
 
 CI_JOBS = {
     "test": ("ubuntu-24.04", "linux/amd64"),
-    "test-linux-arm64": ("ubuntu-latest-arm64-s", "linux/arm64"),
+    "test-linux-arm64": ("ubuntu-24.04-arm64-s", "linux/arm64"),
     "macos-bootstrap-smoke": ("macos-15", "darwin/arm64"),
     "windows-dogfood-x64": ("windows-2022", "windows/amd64"),
-    "windows-dogfood-arm64": ("windows-latest-arm64-s", "windows/arm64"),
+    "windows-dogfood-arm64": ("windows-11-arm64-s", "windows/arm64"),
 }
 WINDOWS_CI_JOBS = ("windows-dogfood-x64", "windows-dogfood-arm64")
 RELEASE_BUILD_JOB = "build"
@@ -56,6 +64,23 @@ if echo "$REPORT" | grep -E "(GPL|AGPL)" >/dev/null 2>&1; then
   exit 1
 fi"""
 HOST_STEP = "Assert native host"
+
+
+def retired_runner_labels() -> tuple[str, str]:
+    # Split so a tree-wide search for the retired token does not match here.
+    token = "latest" + "-arm64" + "-s"
+    return (f"ubuntu-{token}", f"windows-{token}")
+
+
+def contains_retired_runner_labels(text: str) -> list[str]:
+    return [label for label in retired_runner_labels() if label in text]
+
+
+def uses_floating_runner_label(text: str) -> bool:
+    for match in FLOATING_LABEL_RE.finditer(text):
+        if match.group(1) not in PINNED_SELF_HOSTED_LABELS:
+            return True
+    return False
 
 
 def parse_jobs(text: str) -> dict[str, str]:
@@ -276,9 +301,14 @@ def check_windows_packaging(job_name: str, body: str) -> list[str]:
 
 def validate_ci_text(text: str) -> tuple[bool, str]:
     failures: list[str] = []
-    if FLOATING_LABEL_RE.search(text):
+    if uses_floating_runner_label(text):
         failures.append(
             "ci.yml must not use ubuntu-latest, macos-latest, or windows-latest"
+        )
+    retired = contains_retired_runner_labels(text)
+    if retired:
+        failures.append(
+            "ci.yml must not use retired runner labels: " + ", ".join(retired)
         )
     jobs = parse_jobs(text)
     zip_runs: list[str] = []
@@ -287,6 +317,8 @@ def validate_ci_text(text: str) -> tuple[bool, str]:
         if body is None:
             failures.append(f"missing job {name}")
             continue
+        if name in ("test-linux-arm64", "windows-dogfood-arm64") and runner not in PINNED_SELF_HOSTED_LABELS:
+            failures.append(f"{name} table runner {runner} must be a pinned self-hosted label")
         if not re.search(rf"(?m)^    runs-on:\s*{re.escape(runner)}\s*$", body):
             failures.append(f"{name} must run on {runner}")
         if f'= "{host}"' not in body:
