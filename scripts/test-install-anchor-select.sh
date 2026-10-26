@@ -133,6 +133,8 @@ pass "installer pin-map comparison boundaries"
 
 # --- constants coherence ---
 [ "${SHELLSENTRY_PREVKEY_MAX:-}" = "v0.1.6" ] || fail "installer PREVKEY cutoff must be v0.1.6"
+SUNSET='Sunset: this cutoff is frozen at v0.1.6'
+grep -q "$SUNSET" "$INSTALLER" || fail "installer must carry the PREVKEY_MAX sunset note"
 [ "${SHELLSENTRY_MINISIGN_PUBKEY_LEGACY:-}" != "${SHELLSENTRY_MINISIGN_PUBKEY:-}" ] || fail "legacy and current minisign anchors must differ"
 [ "${SHELLSENTRY_PGP_FPR_LEGACY:-}" != "${SHELLSENTRY_PGP_FPR:-}" ] || fail "legacy and current GPG pins must differ"
 [[ "${SHELLSENTRY_PGP_FPR_LEGACY:-}" =~ ^[0-9A-F]{40}$ ]] || fail "legacy GPG pin shape (got: ${SHELLSENTRY_PGP_FPR_LEGACY:-})"
@@ -404,5 +406,64 @@ else
     [ "${CI:-}" != "true" ] || fail "minisign required in CI for the verification half"
     echo "SKIP: minisign not installed; verification half not run"
 fi
+
+prepush_runs_harness() {
+    awk '/^prepush:/{p=1; print; next} p && /^[^[:space:]#]/{exit} p' "$1" |
+        grep -q 'test-install-anchor-select'
+}
+prepush_runs_harness "$ROOT/Makefile" || fail "prepush must run test-install-anchor-select"
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/shs-anchor-wire.XXXXXX")"
+trap 'rm -f "$SRC_COPY"; [ -n "${WORK:-}" ] && rm -rf "$WORK"; rm -rf "$scratch"' EXIT
+python3 - "$ROOT/Makefile" "$scratch/Makefile" <<'PY' || fail "prepush harness mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "test-install-anchor-select "
+if old not in text:
+    raise SystemExit("live Makefile is missing test-install-anchor-select on prepush")
+dest.write_text(text.replace(old, "", 1))
+PY
+if prepush_runs_harness "$scratch/Makefile"; then
+    fail "accepted Makefile after dropping test-install-anchor-select from prepush"
+fi
+pass "prepush keeps the install-anchor harness"
+
+harness_requires_ci_tools() {
+    grep -q 'minisign required in CI for the verification half' "$1" &&
+        grep -q 'gpg required in CI for the gpg half' "$1"
+}
+SELF="${ROOT}/scripts/test-install-anchor-select.sh"
+harness_requires_ci_tools "$SELF" || fail "anchor harness must require minisign and gpg in CI"
+python3 - "$SELF" "$scratch/harness.sh" <<'PY' || fail "CI-tools mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+mut = text.replace("minisign required in CI for the verification half", "minisign optional")
+mut = mut.replace("gpg required in CI for the gpg half", "gpg optional")
+if "minisign required in CI for the verification half" in mut:
+    raise SystemExit("mutant still requires minisign in CI")
+dest.write_text(mut)
+PY
+if harness_requires_ci_tools "$scratch/harness.sh"; then
+    fail "accepted harness after dropping the CI minisign/gpg requirements"
+fi
+pass "anchor harness requires minisign and gpg in CI"
+
+python3 - "$INSTALLER" "$scratch/install.sh" <<'PY' || fail "sunset mutant was not distinguished"
+from pathlib import Path
+import sys
+src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+text = src.read_text()
+old = "Sunset: this cutoff is frozen at v0.1.6"
+if old not in text:
+    raise SystemExit("live installer is missing the sunset note")
+dest.write_text(text.replace(old, "Note: cutoff is v0.1.6", 1))
+PY
+if grep -q 'Sunset: this cutoff is frozen at v0.1.6' "$scratch/install.sh"; then
+    fail "sunset mutant still has the frozen-cutoff note"
+fi
+pass "removing the PREVKEY_MAX sunset note is distinguished"
 
 echo "[ok] install anchor-select regression harness complete"

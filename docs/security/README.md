@@ -43,8 +43,9 @@ consistency signal; it is not release authorization.
 
 The standalone installer (`scripts/install-shellsentry.sh`) carries current and
 retired pin literals because it is fetched by URL with no repository beside it.
-`scripts/test-install-anchor-select.sh` asserts each current literal equals the
-committed file here.
+Tags at or below `v0.1.6` verify under the retired keys; that cutoff is frozen
+and is not raised to retire historical installs. `scripts/test-install-anchor-select.sh`
+asserts each current literal equals the committed file here.
 
 ## Checker
 

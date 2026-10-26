@@ -55,8 +55,8 @@ SFETCH_ACTION_SHA := c44577261902c848119d3c89b0138becb613b158
 SFETCH_ENGINE_REPO := 3leaps/sfetch
 # Third-party sfetch pin is docs/security/sfetch-minisign.pub (no Makefile literal).
 GONEAT_VERSION ?= v0.6.6
-GOVULNCHECK_VERSION ?= v1.6.0
-STATICCHECK_VERSION ?= v0.6.1
+GOVULNCHECK_VERSION ?= v1.9.0
+STATICCHECK_VERSION ?= v0.8.2
 GOSEC_VERSION ?= v2.29.0
 
 # Host binary extension: Windows installers write sfetch.exe / goneat.exe
@@ -94,6 +94,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: test-ci-install-decernor test-release-verify-committed-anchors
 .PHONY: release-insert-anchors release-verify-committed-anchors
 .PHONY: package-all print-sfetch-version test-release-verify-checksums test-bootstrap-pin-match test-install-anchor-select
+.PHONY: test-tool-version-pins
 .PHONY: dogfood assert-no-pipe-install-sfetch test-no-pipe-to-shell-docs check-sfetch-pin-freshness
 .PHONY: assert-sfetch-pin-coupling assert-tool-pins test-assert-tool-pins test-bootstrap-negative-controls
 
@@ -274,6 +275,7 @@ govulncheck: ## Run pinned govulncheck vulnerability scan
 
 precommit: check-all schema-validate govulncheck ## Local pre-commit checks
 	$(MAKE) test-gosec-pin
+	$(MAKE) test-tool-version-pins
 	$(MAKE) gosec-high
 	$(MAKE) release-tag-tests
 	$(MAKE) test-no-pipe-to-shell-docs
@@ -413,6 +415,9 @@ test-install-anchor-select: ## Regression: installer pin-map anchor selection (u
 
 test-gosec-pin: ## Regression: gosec pin and fail-closed missing-binary guard
 	@./scripts/test-gosec-pin.sh
+
+test-tool-version-pins: ## Regression: parser and lint pins stay on the cooled versions
+	@./scripts/test-tool-version-pins.sh
 
 test-release-workflow-draft: ## Regression: tag workflow is read-only and artifacts-only
 	@python3 ./scripts/test-release-workflow-draft.py

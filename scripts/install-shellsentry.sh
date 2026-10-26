@@ -57,6 +57,9 @@ SHELLSENTRY_PGP_FPR="0CACA49B3119B6BC12B2CA11B9B485F294B9FE07"
 # signed with the previous org keys (historical fact, never advance it): tags at
 # or below it verify against the LEGACY anchors; tags above verify against the
 # current ones. Never try both generations for one tag.
+# Sunset: this cutoff is frozen at v0.1.6. Do not raise it to retire historical
+# installs; v0.1.6 and earlier keep the legacy map, and v0.1.7+ stay on the
+# current keys.
 SHELLSENTRY_PREVKEY_MAX="v0.1.6"
 SHELLSENTRY_MINISIGN_PUBKEY_LEGACY="RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC"
 SHELLSENTRY_PGP_FPR_LEGACY="94BB7811D4AD49B2310E0C08FA0651DE91B828ED"
