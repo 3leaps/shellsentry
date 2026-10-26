@@ -193,7 +193,7 @@ export SHELLSENTRY_GPG_HOMEDIR=/path/to/operator/gpg/homedir   # outside repo; n
     make release-notes
     ```
 
-11. **Upload remaining keys** (draft is preserved)
+11. **Upload remaining assets** (draft is preserved)
 
     ```bash
     make release-upload

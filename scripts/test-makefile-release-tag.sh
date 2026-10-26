@@ -63,6 +63,12 @@ for target in release-preflight release-guard-tag-version release-prepare-tag-me
 done
 grep -E '^release-create-draft: require-release-tag' -A2 Makefile | grep -q 'release-create-draft.sh' ||
 	fail "release-create-draft must invoke scripts/release-create-draft.sh"
+grep -E '^release-upload: require-release-tag' -A2 Makefile | grep -q 'upload-release-assets.sh' ||
+	fail "release-upload must invoke scripts/upload-release-assets.sh"
+grep -E '^release-publish: require-release-tag' -A2 Makefile | grep -q 'release-publish.sh' ||
+	fail "release-publish must invoke scripts/release-publish.sh"
+grep -E '^release-notes: require-release-tag' -A8 Makefile | grep -q 'release-notes-$(SHELLSENTRY_RELEASE_TAG).md' ||
+	fail "release-notes must copy docs/releases into release-notes-<tag>.md"
 grep -E '^release-download: require-release-tag' -A2 Makefile | grep -q 'release-fetch-ci-artifacts.sh' ||
 	fail "release-download must invoke scripts/release-fetch-ci-artifacts.sh"
 if grep -E '^release-download:' -A4 Makefile | grep -q 'download-release-assets.sh'; then

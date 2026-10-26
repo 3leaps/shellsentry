@@ -113,6 +113,14 @@ if idx != sorted(idx):
 up = text[idx[2]:idx[3]]
 if "release-notes-" not in up:
     raise SystemExit("release-upload section must name the notes asset")
+heading = "11. **Upload remaining assets**"
+hi = text.find(heading)
+if hi < 0:
+    raise SystemExit("missing step 11 remaining-assets heading")
+if "Upload remaining keys" in text:
+    raise SystemExit("stale Upload remaining keys heading")
+if not (idx[1] < hi < idx[2]):
+    raise SystemExit("step 11 heading must sit between release-notes and release-upload")
 PY
 pass "RELEASE_CHECKLIST ceremony order is create-draft, notes, upload, publish"
 

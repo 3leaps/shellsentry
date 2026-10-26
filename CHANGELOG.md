@@ -36,12 +36,14 @@ Semantic Versioning.
   run shellsentry on it, then execute. Checksums use `sha256sum -c -` or
   `shasum -a 256 -c`, and `set -e` stops the run if a check fails.
   PGP examples fetch `shellsentry-release-signing-key.asc` from the release
-  instead of importing a checkout path, print the fingerprint with
-  `gpg --show-keys --with-fingerprint`, and refuse a mismatch against the
-  pinned primary `0CACA49B3119B6BC12B2CA11B9B485F294B9FE07`.
+  instead of importing a checkout path, require exactly one primary matching
+  `0CACA49B3119B6BC12B2CA11B9B485F294B9FE07`, and verify with
+  `gpgv --keyring` plus `[GNUPG:] VALIDSIG` for signing subkey
+  `DAB70DD758911B26BB45A08C3B75AC591449DEBE`.
   `scripts/test-no-pipe-to-shell-docs.sh` fails if a `curl ... | bash`
   recipe, a bare `sha256sum -c`, an unchained installer run, a checkout
-  PGP import, or a trust-on-first-use PGP import is restored.
+  PGP import, a first-fingerprint-only check, or a two-key bundle is
+  restored.
 - **Draft notes asset matches the tagged notes.** `make release-upload`
   attaches `release-notes-<tag>.md`. `make release-publish` byte-compares
   that asset to `docs/releases/<tag>.md` at the tagged commit. GitHub

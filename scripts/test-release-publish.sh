@@ -1313,6 +1313,14 @@ pass 'positive control signed with throwaway keys publishes after byte compariso
 
 # Documented ceremony: create-draft, then notes, then upload, then publish.
 # create-draft refuses an existing release, so upload cannot run first.
+# The e2e calls the scripts those make targets wrap (release-verify is not
+# cheap to reproduce here).
+grep -E '^release-create-draft: require-release-tag' -A2 "$root/Makefile" | grep -q 'release-create-draft.sh' ||
+	fail 'make release-create-draft must invoke release-create-draft.sh'
+grep -E '^release-upload: require-release-tag' -A2 "$root/Makefile" | grep -q 'upload-release-assets.sh' ||
+	fail 'make release-upload must invoke upload-release-assets.sh'
+grep -E '^release-publish: require-release-tag' -A2 "$root/Makefile" | grep -q 'release-publish.sh' ||
+	fail 'make release-publish must invoke release-publish.sh'
 grep -q 'gh release upload "$TAG" "$NOTES_FILE" --clobber' "$fixture_upload" ||
 	fail 'fixture upload must attach release-notes-<tag>.md'
 python3 - "$root/RELEASE_CHECKLIST.md" <<'PY' || fail 'RELEASE_CHECKLIST ceremony order does not match'
@@ -1336,6 +1344,14 @@ if idx != sorted(idx):
 up = text[idx[2]:idx[3]]
 if "release-notes-" not in up:
     raise SystemExit("release-upload section must name the notes asset")
+heading = "11. **Upload remaining assets**"
+hi = text.find(heading)
+if hi < 0:
+    raise SystemExit("missing step 11 remaining-assets heading")
+if "Upload remaining keys" in text:
+    raise SystemExit("stale Upload remaining keys heading")
+if not (idx[1] < hi < idx[2]):
+    raise SystemExit("step 11 heading must sit between release-notes and release-upload")
 PY
 
 run_ceremony() {

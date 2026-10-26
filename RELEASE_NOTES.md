@@ -45,8 +45,9 @@ Note: Keep only the latest three releases here, in newest-to-oldest order.
   plus minisign or PGP, optionally run shellsentry on it, then execute. They
   do not pipe curl to a shell. Checksums use `sha256sum -c -` or
   `shasum -a 256 -c`, and `set -e` stops the run if a check fails. PGP
-  recipes fetch `shellsentry-release-signing-key.asc`, print its fingerprint,
-  and refuse a mismatch against the pinned primary.
+  recipes fetch `shellsentry-release-signing-key.asc`, require exactly one
+  primary matching the pinned fingerprint, and verify with `gpgv --keyring`
+  plus `[GNUPG:] VALIDSIG` for the pinned signing subkey.
 - `make release-upload` attaches `release-notes-<tag>.md`. `make
   release-publish` byte-compares that asset to `docs/releases/<tag>.md` at
   the tagged commit. GitHub release titles drop a leading `# ` from that
@@ -90,11 +91,13 @@ minisign -Vm SHA256SUMS -P RWTqUZ/PtmfAbQ3RKIlp/YTKT6zFeNMAZ8iAMelhlmqEsVqjKj3ct
 # curl -sSfLO "$BASE/SHA256SUMS.asc"
 # curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"
 # gpg --show-keys --with-fingerprint shellsentry-release-signing-key.asc
-# fpr=$(gpg --show-keys --with-colons shellsentry-release-signing-key.asc | awk -F: '$1=="fpr" {print $10; exit}')
-# [ "$fpr" = 0CACA49B3119B6BC12B2CA11B9B485F294B9FE07 ] || { echo 'error: PGP key is not the pinned primary' >&2; exit 1; }
-# gpg --import shellsentry-release-signing-key.asc
-# signing subkey DAB70DD758911B26BB45A08C3B75AC591449DEBE
-# gpg --verify SHA256SUMS.asc SHA256SUMS
+# listing=$(gpg --show-keys --with-colons shellsentry-release-signing-key.asc)
+# n=$(printf '%s\n' "$listing" | awk -F: '$1=="pub" || $1=="sec" {n++} END {print n+0}')
+# fpr=$(printf '%s\n' "$listing" | awk -F: '$1=="fpr" {print $10; exit}')
+# [ "$n" = 1 ] && [ "$fpr" = 0CACA49B3119B6BC12B2CA11B9B485F294B9FE07 ] || { echo 'error: PGP key is not the pinned primary' >&2; exit 1; }
+# gpg --dearmor --output shellsentry-release-signing-key.gpg shellsentry-release-signing-key.asc
+# status=$(gpgv --keyring ./shellsentry-release-signing-key.gpg --status-fd 1 SHA256SUMS.asc SHA256SUMS) || { echo 'error: PGP signature verification failed' >&2; exit 1; }
+# printf '%s\n' "$status" | grep -q '^\[GNUPG:\] VALIDSIG DAB70DD758911B26BB45A08C3B75AC591449DEBE ' || { echo 'error: PGP signature is not from the pinned signing subkey' >&2; exit 1; }
 if command -v sha256sum >/dev/null 2>&1; then
   grep 'install-shellsentry.sh' SHA256SUMS | sha256sum -c -
 else
