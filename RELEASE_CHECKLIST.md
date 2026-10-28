@@ -46,6 +46,7 @@ Sign with the exact subkey (`SHELLSENTRY_PGP_KEY_ID=<subkey>!`).
 - [ ] Confirm committed anchors: `make release-verify-committed-anchors`
 - [ ] Run the pre-tag gate: `make release-preflight`
 - [ ] Prepare the public tag message (creates `$SHELLSENTRY_TAG_MESSAGE_DIR/message.txt` if missing; does not overwrite): `make release-prepare-tag-message`
+- [ ] Confirm push CI succeeded for the release commit, including the native macOS Go suite. `make release-tag` checks this through the authenticated GitHub CLI.
 - [ ] Create the signed annotated tag locally (does not push): `make release-tag`
 
   Tag signing uses `SHELLSENTRY_GPG_HOMEDIR` and its existing agent/smartcard

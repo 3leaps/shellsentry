@@ -189,6 +189,7 @@ cp "$script" "$root/scripts/release-ci-refuse.sh" "$root/scripts/release-verify-
 	"$root/scripts/upload-release-assets.sh" "$repo/scripts/"
 chmod +x "$repo/scripts/"*.sh
 cp "$root/config/release/tagger-identity.txt" "$repo/config/release/"
+cp "$root/scripts/install-shellsentry.sh" "$repo/scripts/"
 cp -a "$root/internal" "$repo/"
 cp "$root/main.go" "$root/go.mod" "$root/go.sum" "$repo/"
 gpg --batch --armor --export "$primary" >"$repo/docs/security/release-signing-keys.asc"
@@ -203,7 +204,7 @@ full="$(git -C "$repo" rev-parse HEAD)"
 rfc3339='2020-01-02T03:04:05Z'
 go_build() {
 	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
-		CGO_ENABLED=0 go build "$@"
+		CGO_ENABLED=0 GOOS="${GOOS:-linux}" GOARCH="${GOARCH:-amd64}" go build "$@"
 }
 mkdir -p "$scratch/bin"
 # Stamp mod as v0.9.9 on this same commit, then retag v1.2.3 for the gate.
@@ -243,6 +244,11 @@ git -C "$repo" fetch -q origin
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/shellsentry-darwin" .)
 [[ -s "$scratch/bin/shellsentry-darwin" ]] || fail 'darwin fixture binary missing'
+for platform in linux_arm64 windows_amd64 windows_arm64; do
+    (cd "$repo" && GOOS="${platform%_*}" GOARCH="${platform#*_}" go_build -trimpath \
+        -ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
+        -o "$scratch/bin/shellsentry-$platform" .)
+done
 (cd "$repo" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/wrong-ldflag-999" .)
@@ -279,6 +285,9 @@ git -C "$repo" fetch -q origin
 (cd "$repo" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.Version=1.2.3" \
 	-o "$scratch/bin/cli-version" .)
+(cd "$repo" && GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" go_build -trimpath \
+    -ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.Version=1.2.3" \
+    -o "$scratch/bin/cli-version-host" .)
 (cd "$repo" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=9999-99-99T99:99:99Z" \
 	-o "$scratch/bin/invalid-date" .)
@@ -290,7 +299,7 @@ git -C "$repo" fetch -q origin
 	-o "$scratch/bin/double-gitcommit" .)
 
 pack_from() {
-	local binary="$1" dest="$2" darwin="${3:-$1}"
+	local binary="$1" dest="$2" darwin="${3:-$scratch/bin/shellsentry-darwin}"
 	rm -rf "$dest"
 	mkdir -p "$dest"
 	python3 - "$binary" "$dest" "$root/scripts/install-shellsentry.sh" "$darwin" <<'PY'
@@ -311,10 +320,11 @@ for name in (
     "shellsentry_linux_amd64.tar.gz",
     "shellsentry_linux_arm64.tar.gz",
 ):
+    contents = payload if "amd64" in name else (binary.parent / "shellsentry-linux_arm64").read_bytes()
     with tarfile.open(dest / name, "w:gz") as tf:
         info = tarfile.TarInfo("shellsentry")
-        info.size = len(payload)
-        tf.addfile(info, io.BytesIO(payload))
+        info.size = len(contents)
+        tf.addfile(info, io.BytesIO(contents))
 with tarfile.open(dest / "shellsentry_darwin_arm64.tar.gz", "w:gz") as tf:
     info = tarfile.TarInfo("shellsentry")
     info.size = len(darwin_payload)
@@ -324,7 +334,8 @@ for name in (
     "shellsentry_windows_arm64.zip",
 ):
     with zipfile.ZipFile(dest / name, "w") as zf:
-        zf.writestr("shellsentry.exe", payload)
+        arch = "amd64" if "amd64" in name else "arm64"
+        zf.writestr("shellsentry.exe", (binary.parent / f"shellsentry-windows_{arch}").read_bytes())
 (dest / "install-shellsentry.sh").write_bytes(installer_src.read_bytes())
 packages = [
     "shellsentry_linux_amd64.tar.gz",
@@ -366,7 +377,7 @@ stage() {
 }
 restage_from() {
 	local binary="$1"
-	pack_from "$binary" "$d" "$binary"
+	pack_from "$binary" "$d" "$scratch/bin/shellsentry-darwin"
 	sign_dir "$d"
 	cp "$scratch/good.pub" "$d/shellsentry-minisign.pub"
 	git -C "$repo" cat-file blob "$full:docs/security/release-signing-keys.asc" \
@@ -510,6 +521,7 @@ refuse() {
 }
 
 stage
+bash "$root/scripts/test-release-bind-controls.sh" "$repo" "$d"
 if (cd "$repo" && env GITHUB_ACTIONS=true ./scripts/release-publish.sh v1.2.3 "$d") >"$scratch/out" 2>&1; then
 	fail 'publish must refuse GitHub Actions'
 fi
@@ -1115,7 +1127,7 @@ fi
 restore_bind
 pass 'reverting unique 40-hex accepts two delimited commits'
 
-"$scratch/bin/cli-version" version 2>&1 | grep -q '9.9.9' ||
+"$scratch/bin/cli-version-host" version 2>&1 | grep -q '9.9.9' ||
 	fail 'cli.Version fixture must report main.version=9.9.9'
 restage_from "$scratch/bin/cli-version"
 : >"$FIXTURE_LOG"
@@ -1189,8 +1201,8 @@ pass 'reverting the anchor tag-name check accepts tag=v9.9.9'
 
 # L4: local file presence. A symlink is a regular-file lookalike once ! -L is dropped.
 stage
-mv "$d/install-shellsentry.sh" "$d/.real-install"
-ln -s .real-install "$d/install-shellsentry.sh"
+mv "$d/release-notes-v1.2.3.md" "$d/.real-notes"
+ln -s .real-notes "$d/release-notes-v1.2.3.md"
 refuse 'missing local release file'
 pass 'symlinked local release file is refused'
 

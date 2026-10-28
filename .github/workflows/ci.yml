@@ -206,6 +206,9 @@ jobs:
           set -euo pipefail
           test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "darwin/arm64"
 
+      - name: Run Go tests
+        run: make test
+
       - name: Preflight no ambient sfetch/goneat when possible
         run: |
           set -euo pipefail

@@ -179,6 +179,9 @@ chmod +x "$scratch/decernor"
 export SHELLSENTRY_DECERNOR_BIN="$scratch/decernor"
 echo '0.0.0' >"$fixture/VERSION"
 printf 'fixture\n' >"$fixture/file"
+# Isolate signing behavior from the separately tested GitHub CI query.
+printf '#!/usr/bin/env bash\nexit 0\n' >"$fixture/scripts/release-require-native-ci.sh"
+chmod +x "$fixture/scripts/release-require-native-ci.sh"
 git -C "$fixture" add VERSION file docs/security keys scripts config
 git -C "$fixture" -c commit.gpgsign=false commit -qm fixture
 git -C "$fixture" remote add origin https://github.com/3leaps/shellsentry.git

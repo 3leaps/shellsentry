@@ -375,10 +375,10 @@ release-publish: require-release-tag ## Maintainer-only: byte-verify draft asset
 release-download: require-release-tag ## Fetch tag-workflow packages bound to run id, attempt, and digest
 	@./scripts/release-fetch-ci-artifacts.sh "$(SHELLSENTRY_RELEASE_TAG)" "$(DIST_RELEASE)"
 
-bootstrap-script: ## Copy install script into release directory
+bootstrap-script: require-release-tag ## Stage the installer from the tagged commit
 	@mkdir -p $(DIST_RELEASE)
-	cp scripts/install-shellsentry.sh $(DIST_RELEASE)/install-shellsentry.sh
-	@echo "[ok] Copied install-shellsentry.sh to $(DIST_RELEASE)"
+	git show "$(SHELLSENTRY_RELEASE_TAG)^{commit}:scripts/install-shellsentry.sh" > $(DIST_RELEASE)/install-shellsentry.sh
+	@echo "[ok] Staged tagged install-shellsentry.sh to $(DIST_RELEASE)"
 
 release-checksums: bootstrap-script ## Generate SHA256SUMS and SHA512SUMS
 	go run ./scripts/cmd/generate-checksums --dir $(DIST_RELEASE)
@@ -524,6 +524,7 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-release-verify-remote-tag
 	@$(MAKE) test-release-push-tag
 	@$(MAKE) test-release-tag
+	@bash scripts/test-release-require-native-ci.sh
 	@$(MAKE) test-release-tag-smartcard
 	@$(MAKE) test-release-publish
 	@$(MAKE) test-verify-pinned-tag

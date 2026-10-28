@@ -24,9 +24,7 @@ ZIP_SCRIPT = ROOT / "scripts" / "package-windows-zip.sh"
 
 # Matches GH-hosted *-latest and retired org *-latest-* labels. Pinned
 # self-hosted names in PINNED_SELF_HOSTED_LABELS are allowlisted.
-FLOATING_LABEL_RE = re.compile(
-    r"(?m)^\s+(?:runs-on|runner):\s*((?:ubuntu|macos|windows)-latest(?:-\S+)?)\s*$"
-)
+FLOATING_LABEL_RE = re.compile(r"\b(?:ubuntu|macos|windows)-latest(?:-[A-Za-z0-9_-]+)?\b")
 PINNED_SELF_HOSTED_LABELS = frozenset(
     {
         "ubuntu-24.04-arm64-s",
@@ -77,9 +75,18 @@ def contains_retired_runner_labels(text: str) -> list[str]:
 
 
 def uses_floating_runner_label(text: str) -> bool:
-    for match in FLOATING_LABEL_RE.finditer(text):
-        if match.group(1) not in PINNED_SELF_HOSTED_LABELS:
-            return True
+    # Restrict scanning to runner values, including YAML flow and block lists.
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*(?:-\s*)?(?:runs-on|runner):", line):
+            value = line.split(":", 1)[1]
+            indent = len(line) - len(line.lstrip())
+            for following in lines[i + 1:]:
+                if len(following) - len(following.lstrip()) <= indent:
+                    break
+                value += " " + following
+            if FLOATING_LABEL_RE.search(value):
+                return True
     return False
 
 
@@ -173,7 +180,7 @@ def check_skippable_guards(
 
     freshness_steps: list[str] = []
     license_steps: list[str] = []
-    saw_host = False
+    host_steps = 0
     parsed: list[tuple[str, str, str | None, str | None, str]] = []
     for step in steps:
         name = step_meta(step, "name") or ""
@@ -245,7 +252,10 @@ def check_skippable_guards(
             )
 
         if name == HOST_STEP:
-            saw_host = True
+            host_steps += 1
+            expected = ('set -euo pipefail\nhost="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"\nwant="${{ matrix.goos }}/${{ matrix.goarch }}"\necho "runner host $host matches $want"\ntest "$host" = "$want"' if job_name == RELEASE_BUILD_JOB else f'set -euo pipefail\ntest "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "{CI_JOBS[job_name][1]}"')
+            if "\n".join(significant_run_lines(run)) != expected:
+                failures.append(f"{job_name} host check must use the exact fail-closed comparison for {CI_JOBS[job_name][1] if job_name in CI_JOBS else 'matrix host'}")
             if step_meta(step, "shell") is not None:
                 failures.append(f"{job_name} host check must not set a custom shell:")
             if EXIT_ZERO_RE.search(run):
@@ -258,8 +268,8 @@ def check_skippable_guards(
                     f"{job_name} host check must end with a test that exits non-zero"
                 )
 
-    if not saw_host:
-        failures.append(f"{job_name} must contain an Assert native host step")
+    if host_steps != 1:
+        failures.append(f"{job_name} must contain exactly one Assert native host step")
     return failures
 
 
@@ -321,8 +331,6 @@ def validate_ci_text(text: str) -> tuple[bool, str]:
             failures.append(f"{name} table runner {runner} must be a pinned self-hosted label")
         if not re.search(rf"(?m)^    runs-on:\s*{re.escape(runner)}\s*$", body):
             failures.append(f"{name} must run on {runner}")
-        if f'= "{host}"' not in body:
-            failures.append(f"{name} must assert native host {host}")
         failures.extend(
             check_skippable_guards(
                 name,
@@ -336,6 +344,11 @@ def validate_ci_text(text: str) -> tuple[bool, str]:
             for step in steps:
                 if step_meta(step, "name") == "Package Windows zip":
                     zip_runs.append(extract_run_body(step).strip())
+    mac = jobs.get("macos-bootstrap-smoke", "")
+    _, mac_steps = split_header_steps(mac)
+    tests = [step for step in mac_steps if step_meta(step, "name") == "Run Go tests"]
+    if len(tests) != 1 or extract_run_body(tests[0]).strip() != "make test":
+        failures.append("macos-bootstrap-smoke must run make test")
     if len(zip_runs) != 2 or zip_runs[0] != zip_runs[1] or zip_runs[0] != WINDOWS_ZIP_RUN:
         failures.append("windows CI zip steps must be identical calls to package-windows-zip.sh")
     if ZIP_SCRIPT.is_file():
