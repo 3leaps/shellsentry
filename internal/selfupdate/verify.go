@@ -140,7 +140,7 @@ func darwinAMD64RetirementMessage(targetTag string) string {
 			"darwin/amd64 was retired after %s. "+
 			"Pin the last supporting release: download install-shellsentry.sh, SHA256SUMS, and SHA256SUMS.minisig "+
 			"(or SHA256SUMS.asc) from https://github.com/3leaps/shellsentry/releases/download/%s , "+
-			"verify SHA256SUMS with minisign or PGP, optionally run shellsentry on the installer, "+
+			"verify SHA256SUMS using the previous minisign key RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC and the v0.1.4 instructions at https://github.com/3leaps/shellsentry/blob/1ff9c2eb38289a73d8dd55cdf877f93f20bb3f45/docs/releases/v0.1.5.md, then check install-shellsentry.sh against the verified SHA256SUMS before execution, optionally run shellsentry on the installer, "+
 			"then: bash install-shellsentry.sh --tag %s  "+
 			"Or build from source: GOOS=darwin GOARCH=amd64 go build -o shellsentry .",
 		targetTag, LastDarwinAMD64Tag, LastDarwinAMD64Tag, LastDarwinAMD64Tag,

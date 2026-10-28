@@ -228,6 +228,7 @@ pgp_recipe_ok() {
         ! grep -q 'gpg --import configs/keys/' "$file"
 }
 pgp_recipe_ok README.md || fail "README PGP step must fetch, count primaries, and bind the signer"
+pgp_recipe_ok docs/releases/v0.1.7.md || fail "v0.1.7 notes must bind the signer"
 pgp_recipe_ok docs/releases/v0.1.8.md ||
     fail "v0.1.8 notes PGP step must fetch, count primaries, and bind the signer"
 if grep -n 'gpg --import configs/keys/' README.md docs/releases/v0.1.8.md; then
@@ -244,6 +245,7 @@ end = text.find("## v0.1.7")
 if start < 0 or end < 0 or end <= start:
     raise SystemExit("RELEASE_NOTES.md missing v0.1.8 before v0.1.7")
 sec = text[start:end]
+historical = text[end:text.find("## v0.1.6", end)]
 need = [
     'curl -sSfLO "$BASE/shellsentry-release-signing-key.asc"',
     "gpg --show-keys --with-fingerprint shellsentry-release-signing-key.asc",
@@ -257,6 +259,8 @@ need = [
     "error: PGP signature is not from the pinned signing subkey",
 ]
 for item in need:
+    if item not in historical:
+        raise SystemExit(f"v0.1.7 section missing {item!r}")
     if item not in sec:
         raise SystemExit(f"v0.1.8 section missing {item!r}")
 if "gpg --import shellsentry-release-signing-key.asc" in sec:
