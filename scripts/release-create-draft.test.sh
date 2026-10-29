@@ -211,6 +211,7 @@ mkdir -p "$fixture/docs/security" "$fixture/docs/releases" "$fixture/scripts" "$
 cp "$script" "$root/scripts/release-ci-refuse.sh" "$root/scripts/release-verify-tag-anchor.sh" \
 	"$root/scripts/release-bind-archives.sh" "$fixture/scripts/"
 chmod +x "$fixture/scripts/"*.sh
+cp "$root/scripts/install-shellsentry.sh" "$fixture/scripts/"
 cp -a "$root/internal" "$fixture/"
 cp "$root/main.go" "$root/go.mod" "$root/go.sum" "$fixture/"
 fixture_script="$fixture/scripts/release-create-draft.sh"
@@ -237,7 +238,7 @@ short="$(git -C "$fixture" rev-parse --short HEAD)"
 rfc3339='2020-01-02T03:04:05Z'
 go_build() {
 	GOPATH="$gopath" GOCACHE="$gocache" GOMODCACHE="$gomodcache" GOTOOLCHAIN="$gotoolchain" \
-		CGO_ENABLED=0 go build "$@"
+		CGO_ENABLED=0 GOOS="${GOOS:-linux}" GOARCH="${GOARCH:-amd64}" go build "$@"
 }
 mkdir -p "$scratch/bin"
 # Stamp mod as v0.9.9 on this same commit, then retag v1.2.3 for the gate.
@@ -266,6 +267,11 @@ git -C "$fixture" fetch -q origin
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/shellsentry-darwin" .)
 [[ -s "$scratch/bin/shellsentry-darwin" ]] || fail 'darwin fixture binary missing'
+for platform in linux_arm64 windows_amd64 windows_arm64; do
+    (cd "$fixture" && GOOS="${platform%_*}" GOARCH="${platform#*_}" go_build -trimpath \
+        -ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=${rfc3339}" \
+        -o "$scratch/bin/shellsentry-$platform" .)
+done
 (cd "$fixture" && go_build -buildvcs=false -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=zz${short} -X main.buildTime=${rfc3339}" \
 	-o "$scratch/bin/forged-zz" .)
@@ -309,6 +315,9 @@ git -C "$fixture" fetch -q origin
 (cd "$fixture" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.Version=1.2.3" \
 	-o "$scratch/bin/cli-version" .)
+(cd "$fixture" && GOOS="$(go env GOHOSTOS)" GOARCH="$(go env GOHOSTARCH)" go_build -trimpath \
+    -ldflags="-s -w -X main.version=9.9.9 -X main.gitCommit=${full} -X main.buildTime=${rfc3339} -X github.com/3leaps/shellsentry/internal/cli.Version=1.2.3" \
+    -o "$scratch/bin/cli-version-host" .)
 (cd "$fixture" && go_build -trimpath \
 	-ldflags="-s -w -X main.version=1.2.3 -X main.gitCommit=${full} -X main.buildTime=9999-99-99T99:99:99Z" \
 	-o "$scratch/bin/invalid-date" .)
@@ -321,7 +330,7 @@ git -C "$fixture" fetch -q origin
 printf 'working-tree notes must not be used\n' >"$fixture/docs/releases/v1.2.3.md"
 
 pack_from() {
-	local binary="$1" dest="$2" darwin="${3:-$1}"
+	local binary="$1" dest="$2" darwin="${3:-$scratch/bin/shellsentry-darwin}"
 	rm -rf "$dest"
 	mkdir -p "$dest"
 	python3 - "$binary" "$dest" "$root/scripts/install-shellsentry.sh" "$darwin" <<'PY'
@@ -342,10 +351,11 @@ for name in (
     "shellsentry_linux_amd64.tar.gz",
     "shellsentry_linux_arm64.tar.gz",
 ):
+    contents = payload if "amd64" in name else (binary.parent / "shellsentry-linux_arm64").read_bytes()
     with tarfile.open(dest / name, "w:gz") as tf:
         info = tarfile.TarInfo("shellsentry")
-        info.size = len(payload)
-        tf.addfile(info, io.BytesIO(payload))
+        info.size = len(contents)
+        tf.addfile(info, io.BytesIO(contents))
 with tarfile.open(dest / "shellsentry_darwin_arm64.tar.gz", "w:gz") as tf:
     info = tarfile.TarInfo("shellsentry")
     info.size = len(darwin_payload)
@@ -355,7 +365,8 @@ for name in (
     "shellsentry_windows_arm64.zip",
 ):
     with zipfile.ZipFile(dest / name, "w") as zf:
-        zf.writestr("shellsentry.exe", payload)
+        arch = "amd64" if "amd64" in name else "arm64"
+        zf.writestr("shellsentry.exe", (binary.parent / f"shellsentry-windows_{arch}").read_bytes())
 (dest / "install-shellsentry.sh").write_bytes(installer_src.read_bytes())
 packages = [
     "shellsentry_linux_amd64.tar.gz",
@@ -384,6 +395,7 @@ sign_dir() {
 
 pack_from "$scratch/bin/shellsentry" "$scratch/dist" "$scratch/bin/shellsentry-darwin"
 sign_dir "$scratch/dist"
+bash "$root/scripts/test-release-bind-controls.sh" "$fixture" "$scratch/dist"
 
 mkdir -p "$scratch/bin-path"
 export GH_TRACE="$scratch/trace"
@@ -877,6 +889,13 @@ tag, full_commit, info = sys.argv[1], sys.argv[2], sys.argv[3]
 if old not in text:
     raise SystemExit('live script is missing the go version -m bind')
 mut = text.replace(old, new, 1)
+# This mutant exercises the forged Linux archive alone; other platform
+# fixtures correctly carry the full commit rather than a NUL-terminated short ID.
+mut = mut.replace("\tshellsentry_linux_arm64.tar.gz \\\n", "")
+mut = mut.replace("\tshellsentry_windows_amd64.zip \\\n", "")
+mut = mut.replace("\tshellsentry_windows_arm64.zip \\\n", "")
+mut = mut.replace("\tshellsentry_darwin_arm64.tar.gz\n", "")
+mut = mut.replace("\tshellsentry_linux_amd64.tar.gz \\\n", "\tshellsentry_linux_amd64.tar.gz\n")
 if 'rev-parse --short' not in mut:
     raise SystemExit('zz mutant did not switch to a short commit bind')
 Path(sys.argv[2]).write_text(mut)
@@ -1259,7 +1278,7 @@ pass 'reverting unique 40-hex accepts two delimited commits'
 cli_version="$scratch/cli-version"
 pack_from "$scratch/bin/cli-version" "$cli_version"
 sign_dir "$cli_version"
-"$scratch/bin/cli-version" version 2>&1 | grep -q '9.9.9' ||
+"$scratch/bin/cli-version-host" version 2>&1 | grep -q '9.9.9' ||
 	fail 'cli.Version fixture must report main.version=9.9.9'
 if ! run_draft "$cli_version" >/dev/null 2>"$scratch/cli-version.err"; then
 	fail "create-draft must accept cli.Version=1.2.3 with main.version=9.9.9 (known limit) (log: $(cat "$scratch/cli-version.err"))"
@@ -1332,7 +1351,7 @@ import zipfile
 dest = pathlib.Path(sys.argv[1])
 dest.mkdir(parents=True)
 installer_src = pathlib.Path(sys.argv[2])
-payload = b"#!/bin/sh\n# not a Go binary\n\x001.2.3\x002020-01-02T03:04:05Z\x00" + sys.argv[3].encode("ascii") + b"\x00"
+payload = b"\x7fELF\x02\x01" + bytes(12) + b"\x3e\x00" + b"\x001.2.3\x002020-01-02T03:04:05Z\x00" + sys.argv[3].encode("ascii") + b"\x00"
 for name in (
     "shellsentry_linux_amd64.tar.gz",
     "shellsentry_linux_arm64.tar.gz",
@@ -1389,11 +1408,12 @@ then
 	fail 'non-Go mutant was not distinguished'
 fi
 chmod +x "$fixture_bind"
-if ! "$fixture_script" v1.2.3 "$nongo" >/dev/null 2>"$scratch/mut-nongo.err"; then
-	fail "dropping the is-Go-binary check must accept a shell script payload (log: $(cat "$scratch/mut-nongo.err"))"
+if "$fixture_script" v1.2.3 "$nongo" >/dev/null 2>"$scratch/mut-nongo.err"; then
+    fail 'target metadata must reject a non-Go binary even if the Go check is bypassed'
 fi
+grep -q 'Go target does not match platform' "$scratch/mut-nongo.err" || fail 'missing Go target refusal'
 restore_draft
-pass 'reverting the is-Go-binary check accepts a non-Go archive'
+pass 'Go target metadata rejects a non-Go archive if the Go check is bypassed'
 
 if ! python3 - "$fixture_script" "$fixture_script" <<'PY'
 from pathlib import Path

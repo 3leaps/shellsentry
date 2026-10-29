@@ -11,6 +11,9 @@ Semantic Versioning.
 
 ### Fixed
 
+- Release checks bind the installer and platform archives to the tagged source,
+  harden native-runner guards, and clarify verified recovery instructions.
+
 - **Pinned gosec in CI.** `gosec` is pinned to v2.29.0 (`go install` into
   `bin/`). `make gosec-high` fails closed if `gosec` is missing, instead of
   exiting 127 when goneat cooling skips a newer `@latest` build. It also

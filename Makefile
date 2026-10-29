@@ -85,6 +85,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-publish release-tag-tests require-release-tag
 .PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft test-release-create-draft
 .PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
+.PHONY: test-release-tag-ci-gate test-bootstrap-script
 .PHONY: test-release-verify-published-tag test-release-ci-artifact-draft
 .PHONY: test-version-ldflags test-release-preflight test-release-guard-tag-version
 .PHONY: test-release-tag-operator test-release-prepare-tag-message test-release-tag-controls
@@ -375,10 +376,10 @@ release-publish: require-release-tag ## Maintainer-only: byte-verify draft asset
 release-download: require-release-tag ## Fetch tag-workflow packages bound to run id, attempt, and digest
 	@./scripts/release-fetch-ci-artifacts.sh "$(SHELLSENTRY_RELEASE_TAG)" "$(DIST_RELEASE)"
 
-bootstrap-script: ## Copy install script into release directory
+bootstrap-script: require-release-tag ## Stage the installer from the tagged commit
 	@mkdir -p $(DIST_RELEASE)
-	cp scripts/install-shellsentry.sh $(DIST_RELEASE)/install-shellsentry.sh
-	@echo "[ok] Copied install-shellsentry.sh to $(DIST_RELEASE)"
+	git show "$(SHELLSENTRY_RELEASE_TAG)^{commit}:scripts/install-shellsentry.sh" > $(DIST_RELEASE)/install-shellsentry.sh
+	@echo "[ok] Staged tagged install-shellsentry.sh to $(DIST_RELEASE)"
 
 release-checksums: bootstrap-script ## Generate SHA256SUMS and SHA512SUMS
 	go run ./scripts/cmd/generate-checksums --dir $(DIST_RELEASE)
@@ -467,6 +468,12 @@ test-release-tag: ## Regression: signed tag stays local and refuses GitHub Actio
 test-release-tag-smartcard: ## Regression: tag signing uses operator GPG home (no secret export)
 	@./scripts/test-release-tag-smartcard.sh
 
+test-release-tag-ci-gate: ## Regression: failing exact-HEAD CI gate prevents tag signing
+	@bash scripts/test-release-tag-ci-gate.sh
+
+test-bootstrap-script: ## Regression: installer staging ignores working-tree edits
+	@bash scripts/test-bootstrap-script.sh
+
 test-release-publish: ## Regression: publish promotes only a pin-signed, byte-verified draft
 	@./scripts/test-release-publish.sh
 
@@ -524,6 +531,9 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-release-verify-remote-tag
 	@$(MAKE) test-release-push-tag
 	@$(MAKE) test-release-tag
+	@bash scripts/test-release-require-native-ci.sh
+	@$(MAKE) test-release-tag-ci-gate
+	@$(MAKE) test-bootstrap-script
 	@$(MAKE) test-release-tag-smartcard
 	@$(MAKE) test-release-publish
 	@$(MAKE) test-verify-pinned-tag

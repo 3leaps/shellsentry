@@ -422,6 +422,35 @@ for label, mutator in (
         raise SystemExit(f"FAIL: validator accepted fixture with {label}")
     print(f"PASS: validator rejects {label}")
 
+# Reject host-check bypasses in both workflows and floating runner values.
+from workflow_native_guards import validate_ci_text
+ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+for label, source, validator, assertion in (
+    ("CI", ci, validate_ci_text, 'test "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "linux/amd64"'),
+    ("release", workflow, validate, 'test "$host" = "$want"'),
+):
+    variants = {
+        "commented assertion": source.replace(assertion, "# " + assertion + "\n          test 1 = 1", 1),
+        "unrelated test": source.replace(assertion, "test 1 = 1", 1),
+        "conditional assertion": source.replace(assertion, "if true; then " + assertion + "; fi", 1),
+        "duplicate step": source.replace("      - name: Assert native host\n", "      - name: Assert native host\n        run: test 1 = 1\n\n      - name: Assert native host\n", 1),
+    }
+    for name, mutant in variants.items():
+        if mutant == source or validator(mutant)[0]:
+            raise SystemExit(f"FAIL: {label} accepted {name}")
+        print(f"PASS: {label} rejects {name}")
+for runner in ('"ubuntu-latest"', "'ubuntu-latest'", '[self-hosted, "ubuntu-latest"]', "\n      - self-hosted\n      - 'ubuntu-latest'"):
+    mutant = ci + "\n  extra:\n    runs-on: " + runner + "\n    steps: []\n"
+    if validate_ci_text(mutant)[0]:
+        raise SystemExit(f"FAIL: accepted runner {runner}")
+    print(f"PASS: rejects runner {runner}")
+matrix_mutant = workflow.replace("          - runner: macos-15", "          - runner: 'ubuntu-latest'\n            goos: linux\n            goarch: amd64\n          - runner: macos-15", 1)
+if matrix_mutant == workflow or validate(matrix_mutant)[0]:
+    raise SystemExit("FAIL: accepted quoted floating matrix runner")
+print("PASS: rejects quoted floating matrix runner")
+if validate_ci_text(ci.replace("        run: make test", "        run: echo skipped", 1))[0]:
+    raise SystemExit("FAIL: accepted missing macOS suite")
+
 zip_script = (ROOT / "scripts" / "package-windows-zip.sh").read_text(encoding="utf-8")
 zip_fails = validate_windows_zip_script(zip_script)
 if zip_fails:

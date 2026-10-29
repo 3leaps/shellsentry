@@ -32,6 +32,11 @@ commit="$(git -C "$root" rev-parse --verify --quiet "${tag}^{commit}")" || die "
 work="$(mktemp -d /tmp/shs-ba.XXXXXX)"
 work="$(CDPATH= cd -P -- "$work" && pwd -P)"
 trap 'rm -rf "$work"' EXIT
+git -C "$root" cat-file blob "$commit:scripts/install-shellsentry.sh" >"$work/install-shellsentry.sh" ||
+    die "tagged installer is missing"
+[[ -f "$src/install-shellsentry.sh" && ! -L "$src/install-shellsentry.sh" ]] &&
+    cmp -s "$work/install-shellsentry.sh" "$src/install-shellsentry.sh" ||
+    die "staged installer does not match tagged installer"
 
 bind_archive() {
 	local archive="$1" dest="$work/extract"
@@ -45,12 +50,12 @@ import zipfile
 
 archive = pathlib.Path(sys.argv[1])
 out = pathlib.Path(sys.argv[2])
-wanted = {"shellsentry", "shellsentry.exe"}
+wanted = "shellsentry.exe" if archive.name.endswith(".zip") else "shellsentry"
 data = None
 if archive.name.endswith(".tar.gz"):
     with tarfile.open(archive, "r:gz") as tf:
-        members = [m for m in tf.getmembers() if pathlib.Path(m.name).name in wanted and m.isfile()]
-        if len(members) != 1:
+        members = tf.getmembers()
+        if len(members) != 1 or members[0].name != wanted or not members[0].isfile():
             raise SystemExit(f"error: {archive.name} must contain exactly one shellsentry binary")
         extracted = tf.extractfile(members[0])
         if extracted is None:
@@ -58,12 +63,27 @@ if archive.name.endswith(".tar.gz"):
         data = extracted.read()
 elif archive.name.endswith(".zip"):
     with zipfile.ZipFile(archive) as zf:
-        members = [n for n in zf.namelist() if pathlib.Path(n).name in wanted and not n.endswith("/")]
-        if len(members) != 1:
+        members = zf.infolist()
+        if len(members) != 1 or members[0].filename != wanted or members[0].is_dir() or (members[0].external_attr >> 16) & 0o170000 not in (0, 0o100000):
             raise SystemExit(f"error: {archive.name} must contain exactly one shellsentry binary")
         data = zf.read(members[0])
 else:
     raise SystemExit(f"error: unrecognized archive {archive.name}")
+# Check executable format and machine as well as Go build metadata below.
+import struct
+os_name, arch = archive.name.removeprefix("shellsentry_").split(".", 1)[0].split("_")
+try:
+    if os_name == "linux":
+        valid = data[:6] == b"\x7fELF\x02\x01" and struct.unpack_from("<H", data, 18)[0] == {"amd64": 62, "arm64": 183}[arch]
+    elif os_name == "windows":
+        offset = struct.unpack_from("<I", data, 60)[0]
+        valid = data[:2] == b"MZ" and data[offset:offset+4] == b"PE\0\0" and struct.unpack_from("<H", data, offset+4)[0] == {"amd64": 0x8664, "arm64": 0xaa64}[arch]
+    else:
+        valid = data[:4] == b"\xcf\xfa\xed\xfe" and struct.unpack_from("<I", data, 4)[0] == 0x100000c and arch == "arm64"
+except (struct.error, KeyError):
+    valid = False
+if not valid:
+    raise SystemExit(f"error: {archive.name} has wrong executable format or architecture")
 out.write_bytes(data)
 PY
 	then
@@ -72,6 +92,11 @@ PY
 	bin="$dest/shellsentry"
 	[[ -s "$bin" ]] || die "no shellsentry binary in $archive"
 	info="$(go version -m "$bin" 2>/dev/null)" || die "$archive is not a Go binary"
+    target="${archive#shellsentry_}"
+    target="${target%%.*}"
+    os_name="${target%_*}"; arch="${target#*_}"
+    printf '%s\n' "$info" | sed 's/^[[:space:]]*//' | grep -Fqx "$(printf 'build\tGOOS=%s' "$os_name")" || die "$archive Go target does not match platform"
+    printf '%s\n' "$info" | sed 's/^[[:space:]]*//' | grep -Fqx "$(printf 'build\tGOARCH=%s' "$arch")" || die "$archive Go target does not match platform"
 	if ! python3 - "$bin" "$version" "$tag" "$commit" "$info" <<'PY'
 from datetime import datetime
 from pathlib import Path

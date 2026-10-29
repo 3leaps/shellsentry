@@ -14,6 +14,7 @@ tag_version
 tag_identity
 tag_key_selector
 tag_checkout
+"$tag_root/scripts/release-require-native-ci.sh" "$(git rev-parse HEAD)"
 [[ -z "$(git ls-remote --tags origin "refs/tags/$SHELLSENTRY_RELEASE_TAG")" ]] || tag_die 'remote tag already exists'
 [[ -z "$(git show-ref --tags "refs/tags/$SHELLSENTRY_RELEASE_TAG" || true)" ]] || tag_die 'local tag already exists'
 message="$(mktemp)"

@@ -54,6 +54,9 @@ func TestDarwinAMD64RetirementMessage(t *testing.T) {
 		"--tag " + LastDarwinAMD64Tag,
 		"v0.1.5",
 		"SHA256SUMS",
+		"check install-shellsentry.sh against the verified SHA256SUMS before execution",
+		"1ff9c2eb38289a73d8dd55cdf877f93f20bb3f45/docs/releases/v0.1.5.md",
+		"RWTAoUJ007VE3h8tbHlBCyk2+y0nn7kyA4QP34LTzdtk8M6A2sryQtZC",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message missing %q: %s", want, msg)
