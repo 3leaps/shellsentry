@@ -85,6 +85,7 @@ GONEAT = $(shell [ -x "$(GONEAT_LOCAL)" ] && echo "$(GONEAT_LOCAL)" || command -
 .PHONY: release-publish release-tag-tests require-release-tag
 .PHONY: test-release-ci-hygiene test-makefile-release-tag test-upload-release-draft test-release-create-draft
 .PHONY: test-release-tag test-release-tag-smartcard test-release-publish test-verify-pinned-tag
+.PHONY: test-release-tag-ci-gate test-bootstrap-script
 .PHONY: test-release-verify-published-tag test-release-ci-artifact-draft
 .PHONY: test-version-ldflags test-release-preflight test-release-guard-tag-version
 .PHONY: test-release-tag-operator test-release-prepare-tag-message test-release-tag-controls
@@ -467,6 +468,12 @@ test-release-tag: ## Regression: signed tag stays local and refuses GitHub Actio
 test-release-tag-smartcard: ## Regression: tag signing uses operator GPG home (no secret export)
 	@./scripts/test-release-tag-smartcard.sh
 
+test-release-tag-ci-gate: ## Regression: failing exact-HEAD CI gate prevents tag signing
+	@bash scripts/test-release-tag-ci-gate.sh
+
+test-bootstrap-script: ## Regression: installer staging ignores working-tree edits
+	@bash scripts/test-bootstrap-script.sh
+
 test-release-publish: ## Regression: publish promotes only a pin-signed, byte-verified draft
 	@./scripts/test-release-publish.sh
 
@@ -525,6 +532,8 @@ release-tag-tests: ## Signed-tag tooling tests (throwaway keys only; never the d
 	@$(MAKE) test-release-push-tag
 	@$(MAKE) test-release-tag
 	@bash scripts/test-release-require-native-ci.sh
+	@$(MAKE) test-release-tag-ci-gate
+	@$(MAKE) test-bootstrap-script
 	@$(MAKE) test-release-tag-smartcard
 	@$(MAKE) test-release-publish
 	@$(MAKE) test-verify-pinned-tag
